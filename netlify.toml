@@ -10,6 +10,12 @@
   force = true
 
 [[redirects]]
+  from = "/api/adsbim/*"
+  to = "https://adsb.im/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/api/airplaneslive/*"
   to = "https://api.airplanes.live/:splat"
   status = 200
