@@ -1,0 +1,811 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Flight Tracker</title>
+<meta name="description" content="Live aircraft around your current location, with route, altitude, speed and distance.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Layout: one-screen app. Map fills the left, a column of ATC-style flight strips on the right; stacks map-over-strips on phones. */
+:root {
+  --bg: #eef2f5;
+  --surface: #ffffff;
+  --surface-2: #f5f8fa;
+  --line: #d5dde4;
+  --fg: #142230;
+  --muted: #5a6b7b;
+  --accent: #0a62c2;
+  --accent-ink: #ffffff;
+  --sel: #f0a020;
+  --danger: #c62828;
+  --alt-gnd: #8a96a2;
+  --alt-1: #1f9d55;
+  --alt-2: #0d8f9c;
+  --alt-3: #2f66d6;
+  --alt-4: #7a48d4;
+  --shadow: 0 1px 2px rgba(20,34,48,.08), 0 6px 20px rgba(20,34,48,.08);
+  --f-display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-data: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c141c; --surface: #131e29; --surface-2: #182533; --line: #253546;
+    --fg: #e4edf5; --muted: #8fa3b6; --accent: #4c9bff; --accent-ink: #06121f;
+    --sel: #ffb53d; --danger: #ff5c5c;
+    --alt-gnd: #7b8794; --alt-1: #3cc274; --alt-2: #2bb9c6; --alt-3: #5b8cff; --alt-4: #a57cff;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c141c; --surface: #131e29; --surface-2: #182533; --line: #253546;
+  --fg: #e4edf5; --muted: #8fa3b6; --accent: #4c9bff; --accent-ink: #06121f;
+  --sel: #ffb53d; --danger: #ff5c5c;
+  --alt-gnd: #7b8794; --alt-1: #3cc274; --alt-2: #2bb9c6; --alt-3: #5b8cff; --alt-4: #a57cff;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.45 var(--f-body);
+  display: grid; grid-template-rows: auto 1fr;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+/* Header */
+.top {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+  padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: baseline; gap: 8px; margin-right: auto; }
+.brand h1 { margin: 0; font: 700 24px/1 var(--f-display); letter-spacing: .02em; text-transform: uppercase; }
+.brand span { font: 500 13px/1 var(--f-data); color: var(--muted); }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2);
+  font: 500 13px/1 var(--f-data); white-space: nowrap;
+}
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.chip.ok .dot { background: var(--alt-1); }
+.chip.warn .dot { background: var(--sel); }
+.chip.err .dot { background: var(--danger); }
+.btn {
+  height: 32px; padding: 0 12px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface-2); font-weight: 600; font-size: 14px;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn[aria-pressed="true"] { background: var(--sel); color: #1a1200; border-color: var(--sel); }
+select.btn { padding-right: 8px; }
+label.inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+
+/* Main */
+.main { display: grid; grid-template-columns: 1fr minmax(320px, 400px); min-height: 0; }
+.mapwrap { position: relative; min-height: 0; }
+#map { position: absolute; inset: 0; background: var(--surface-2); }
+.side { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border-left: 1px solid var(--line); }
+
+.banner {
+  margin: 12px 12px 0; padding: 10px 12px; border-radius: 6px; font-size: 14px;
+  border: 1px solid var(--line); background: var(--surface-2);
+}
+.banner.err { border-color: var(--danger); }
+.banner.demo { border-color: var(--sel); }
+.banner strong { display: block; margin-bottom: 2px; }
+.banner .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+
+.summary {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin: 12px;
+  background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+}
+.summary div { background: var(--surface); padding: 8px 10px; min-width: 0; }
+.summary b { display: block; font: 600 20px/1.1 var(--f-data); font-variant-numeric: tabular-nums; }
+.summary small { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+
+.listhead {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 0 12px 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+}
+.strips { list-style: none; margin: 0; padding: 0 12px 12px; overflow-y: auto; display: grid; grid-auto-rows: max-content; gap: 6px; align-content: start; flex: 1; min-height: 0; }
+
+/* Flight progress strip */
+.strip {
+  display: grid; grid-template-columns: 6px 1fr auto; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; overflow: hidden;
+}
+.strip:hover { border-color: var(--accent); }
+.strip.sel { border-color: var(--sel); box-shadow: 0 0 0 1px var(--sel); }
+.strip .band { background: var(--c, var(--alt-gnd)); }
+.strip .a { padding: 7px 10px; min-width: 0; }
+.strip .b { padding: 7px 10px; text-align: right; border-left: 1px dashed var(--line); font-family: var(--f-data); font-size: 13px; font-variant-numeric: tabular-nums; }
+.cs { font: 700 20px/1.05 var(--f-display); letter-spacing: .03em; }
+.sub { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.route { font: 600 13px/1.3 var(--f-data); }
+.route.unk { color: var(--muted); font-weight: 400; }
+.b .alt { font-weight: 600; font-size: 15px; }
+.b .dist { color: var(--muted); }
+.arrow { display: inline-block; transition: transform .3s; }
+.sq { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 3px; background: var(--danger); color: #fff; font: 600 11px/18px var(--f-data); vertical-align: 3px; }
+
+.empty { padding: 24px 12px; text-align: center; color: var(--muted); }
+
+/* Detail */
+.detail { flex: 1; overflow-y: auto; padding: 0 12px 16px; }
+.detail .back { margin: 12px 0; }
+.dhead { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.dhead .cs { font-size: 38px; }
+.dhead .op { color: var(--muted); }
+.legs {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px;
+  margin: 14px 0; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2);
+}
+.leg code { display: block; font: 700 28px/1 var(--f-display); letter-spacing: .04em; }
+.leg span { display: block; font-size: 12px; color: var(--muted); }
+.leg.to { text-align: right; }
+.legs .mid { color: var(--muted); font-family: var(--f-data); }
+.legs .note { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+dl.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin: 0; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+dl.facts div { background: var(--surface); padding: 8px 10px; min-width: 0; }
+dl.facts dt { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+dl.facts dd { margin: 2px 0 0; font: 600 15px/1.3 var(--f-data); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+dl.facts dd small { font-weight: 400; color: var(--muted); }
+.links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.links a { color: var(--accent); font-weight: 600; }
+.foot { padding: 8px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); }
+.foot a { color: inherit; }
+
+/* Map bits */
+.ac-icon { width: 28px; height: 28px; }
+.ac-icon svg { width: 28px; height: 28px; transform: rotate(var(--rot, 0deg)); transition: transform .4s; filter: drop-shadow(0 1px 1px rgba(0,0,0,.45)); }
+.ac-icon path { fill: var(--c); stroke: var(--surface); stroke-width: 1; }
+.ac-icon.sel path { fill: var(--sel); stroke: var(--fg); }
+.me-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 3px solid #fff; box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 25%, transparent); }
+.legend {
+  position: absolute; left: 10px; bottom: 24px; z-index: 500; padding: 8px 10px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow);
+  font: 500 12px/1.6 var(--f-data);
+}
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.pickhint {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 600;
+  padding: 8px 12px; background: var(--sel); color: #1a1200; border-radius: 6px; font-weight: 600; box-shadow: var(--shadow);
+  max-width: calc(100% - 32px); text-align: center;
+}
+.leaflet-container { font-family: var(--f-body); }
+.leaflet-tooltip.ac-tip { font: 600 12px/1.2 var(--f-data); padding: 2px 6px; }
+.leaflet-picking { cursor: crosshair; }
+
+@media (max-width: 760px) {
+  .main { grid-template-columns: 1fr; grid-template-rows: 42% 1fr; }
+  .side { border-left: 0; border-top: 1px solid var(--line); }
+  .brand span, label.inline .lbl { display: none; }
+  .top { padding-block: 8px; }
+  .legend { display: none; }
+  .banner { margin: 8px 12px 0; padding: 8px 10px; font-size: 13px; }
+  .summary { margin: 8px 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ac-icon svg, .arrow { transition: none; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><h1>Flight Tracker</h1><span id="clock">--:--:-- UTC</span></div>
+  <div class="controls">
+    <span class="chip" id="locChip" title="Your position"><span class="dot"></span><span id="locText">Locating…</span></span>
+    <label class="inline" for="radius"><span class="lbl">Radius</span>
+      <select class="btn" id="radius">
+        <option value="10">10 km</option>
+        <option value="25">25 km</option>
+        <option value="50" selected>50 km</option>
+        <option value="100">100 km</option>
+        <option value="200">200 km</option>
+      </select>
+    </label>
+    <button class="btn" id="pickBtn" aria-pressed="false" type="button">Pick on map</button>
+    <button class="btn primary" id="refreshBtn" type="button">Refresh <span id="countdown"></span></button>
+  </div>
+</header>
+
+<main class="main">
+  <div class="mapwrap">
+    <div id="map" aria-label="Map of aircraft near you"></div>
+    <div class="pickhint" id="pickHint" hidden>Tap the map to set your position</div>
+    <div class="legend" aria-label="Altitude colours">
+      <div><i style="background:var(--alt-4)"></i>&gt; 30,000 ft</div>
+      <div><i style="background:var(--alt-3)"></i>15–30,000</div>
+      <div><i style="background:var(--alt-2)"></i>5–15,000</div>
+      <div><i style="background:var(--alt-1)"></i>&lt; 5,000</div>
+      <div><i style="background:var(--alt-gnd)"></i>On ground</div>
+    </div>
+  </div>
+
+  <aside class="side">
+    <div id="banner" class="banner" hidden></div>
+
+    <section id="listView" style="display:flex;flex-direction:column;min-height:0;flex:1">
+      <div class="summary">
+        <div><b id="sCount">–</b><small>Aircraft</small></div>
+        <div><b id="sNear">–</b><small>Nearest</small></div>
+        <div><b id="sHigh">–</b><small>Highest</small></div>
+      </div>
+      <div class="listhead"><span>Closest first</span><span id="updated">Not updated yet</span></div>
+      <ul class="strips" id="strips"></ul>
+    </section>
+
+    <section id="detailView" class="detail" hidden></section>
+
+    <div class="foot">Live data: <a href="https://adsb.lol" target="_blank" rel="noopener">adsb.lol</a> (ODbL), fallback <a href="https://airplanes.live" target="_blank" rel="noopener">airplanes.live</a>. Routes are best-effort and may be wrong. <span id="srcNote"></span></div>
+  </aside>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+"use strict";
+
+// ---------- Config ----------
+const REFRESH_MS = 15000;
+const KM_PER_NM = 1.852;
+const SOURCES = [
+  { name: "adsb.lol",       url: (la, lo, nm) => `https://api.adsb.lol/v2/point/${la}/${lo}/${nm}` },
+  { name: "airplanes.live", url: (la, lo, nm) => `https://api.airplanes.live/v2/point/${la}/${lo}/${nm}` },
+];
+const ROUTE_URL = "https://api.adsb.lol/api/0/routeset";
+const FALLBACK_POS = { lat: 28.5562, lon: 77.1000 }; // Delhi IGI, used only until a real position arrives
+
+// ICAO airline designator -> name (first 3 letters of an airline callsign)
+const AIRLINES = {
+  AIC:"Air India", IGO:"IndiGo", AKJ:"Akasa Air", SEJ:"SpiceJet", AXB:"Air India Express", IAD:"Air India Express",
+  VTI:"Vistara", LLR:"Alliance Air", FLG:"Fly91", SDG:"Star Air", BDA:"Blue Dart", QKR:"Quikjet",
+  UAE:"Emirates", ETD:"Etihad", QTR:"Qatar Airways", ABY:"Air Arabia", FDB:"flydubai", SVA:"Saudia", GFA:"Gulf Air",
+  OMA:"Oman Air", KAC:"Kuwait Airways", BAW:"British Airways", VIR:"Virgin Atlantic", DLH:"Lufthansa", AFR:"Air France",
+  KLM:"KLM", SWR:"Swiss", AUA:"Austrian", THY:"Turkish Airlines", SIA:"Singapore Airlines", MAS:"Malaysia Airlines",
+  THA:"Thai Airways", CPA:"Cathay Pacific", ANA:"ANA", JAL:"Japan Airlines", KAL:"Korean Air", CCA:"Air China",
+  CES:"China Eastern", CSN:"China Southern", ALK:"SriLankan", BBC:"Biman", RNA:"Nepal Airlines", UAL:"United",
+  AAL:"American", DAL:"Delta", SWA:"Southwest", JBU:"JetBlue", ACA:"Air Canada", QFA:"Qantas", ETH:"Ethiopian",
+  RYR:"Ryanair", EZY:"easyJet", WZZ:"Wizz Air", FDX:"FedEx", UPS:"UPS", GTI:"Atlas Air", CLX:"Cargolux",
+};
+
+// ---------- State ----------
+const state = {
+  me: null,            // {lat, lon, acc, kind:'gps'|'manual'|'default'}
+  radiusKm: 50,
+  planes: new Map(),   // hex -> plane
+  routes: new Map(),   // callsign -> route object | null (unknown)
+  selected: null,
+  demo: false,
+  fetchedAt: 0,
+  source: null,
+  timer: null,
+  nextAt: 0,
+  picking: false,
+  inflight: false,
+};
+
+// ---------- Helpers ----------
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const rad = (d) => d * Math.PI / 180;
+const deg = (r) => r * 180 / Math.PI;
+const fmt = (n, d = 0) => Number(n).toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d });
+
+function haversineKm(a, b) {
+  const R = 6371, dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function bearingDeg(a, b) {
+  const y = Math.sin(rad(b.lon - a.lon)) * Math.cos(rad(b.lat));
+  const x = Math.cos(rad(a.lat)) * Math.sin(rad(b.lat)) - Math.sin(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.cos(rad(b.lon - a.lon));
+  return (deg(Math.atan2(y, x)) + 360) % 360;
+}
+function destPoint(p, brgDeg, km) {
+  const R = 6371, d = km / R, b = rad(brgDeg), la1 = rad(p.lat), lo1 = rad(p.lon);
+  const la2 = Math.asin(Math.sin(la1) * Math.cos(d) + Math.cos(la1) * Math.sin(d) * Math.cos(b));
+  const lo2 = lo1 + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(la1), Math.cos(d) - Math.sin(la1) * Math.sin(la2));
+  return { lat: deg(la2), lon: ((deg(lo2) + 540) % 360) - 180 };
+}
+const COMPASS = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+const compass = (b) => COMPASS[Math.round(b / 22.5) % 16];
+
+function altBand(p) {
+  if (p.onGround || p.alt == null || p.alt < 100) return "--alt-gnd";
+  if (p.alt < 5000) return "--alt-1";
+  if (p.alt < 15000) return "--alt-2";
+  if (p.alt < 30000) return "--alt-3";
+  return "--alt-4";
+}
+function altText(p) {
+  if (p.onGround) return "GND";
+  if (p.alt == null) return "—";
+  return p.alt >= 10000 ? "FL" + String(Math.round(p.alt / 100)).padStart(3, "0") : fmt(p.alt) + " ft";
+}
+function airlineOf(p) {
+  const cs = p.callsign || "";
+  if (/^[A-Z]{3}\d/.test(cs) && AIRLINES[cs.slice(0, 3)]) return AIRLINES[cs.slice(0, 3)];
+  return p.op || null;
+}
+const SQUAWK = { "7500": "Hijack", "7600": "Radio failure", "7700": "Emergency" };
+
+// ---------- Map ----------
+const map = L.map("map", { zoomControl: true, attributionControl: true, worldCopyJump: true })
+  .setView([FALLBACK_POS.lat, FALLBACK_POS.lon], 9);
+
+const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+const isDark = () => document.documentElement.dataset.theme === "dark" || (document.documentElement.dataset.theme !== "light" && darkQuery.matches);
+let tiles = null;
+function setTiles() {
+  if (tiles) map.removeLayer(tiles);
+  tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${isDark() ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png`, {
+    maxZoom: 18, subdomains: "abcd",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  }).addTo(map);
+}
+setTiles();
+darkQuery.addEventListener?.("change", setTiles);
+
+let meMarker = null, meCircle = null, accCircle = null;
+const markers = new Map(); // hex -> L.marker
+const PLANE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.5c.9 0 1.4.8 1.4 1.8V9l8 4.7v2.1l-8-2.4v5l2.3 1.8v1.6L12 21l-3.7.8v-1.6l2.3-1.8v-5l-8 2.4v-2.1l8-4.7V3.3c0-1 .5-1.8 1.4-1.8z"/></svg>';
+
+function drawMe() {
+  if (!state.me) return;
+  const ll = [state.me.lat, state.me.lon];
+  if (!meMarker) {
+    meMarker = L.marker(ll, { icon: L.divIcon({ className: "", html: '<div class="me-dot"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }), zIndexOffset: 1000, keyboard: false })
+      .bindTooltip("You", { direction: "top", offset: [0, -10] }).addTo(map);
+    meCircle = L.circle(ll, { radius: state.radiusKm * 1000, color: "#0a62c2", weight: 1.5, dashArray: "6 6", fill: false, interactive: false }).addTo(map);
+  } else {
+    meMarker.setLatLng(ll);
+    meCircle.setLatLng(ll).setRadius(state.radiusKm * 1000);
+  }
+  if (state.me.acc && state.me.kind === "gps") {
+    if (!accCircle) accCircle = L.circle(ll, { radius: state.me.acc, stroke: false, fillColor: "#0a62c2", fillOpacity: .12, interactive: false }).addTo(map);
+    else accCircle.setLatLng(ll).setRadius(state.me.acc);
+  } else if (accCircle) { map.removeLayer(accCircle); accCircle = null; }
+}
+function fitRadius() {
+  if (!meCircle) return;
+  map.fitBounds(meCircle.getBounds(), { padding: [20, 20] });
+}
+
+function planeIcon(p) {
+  const sel = p.hex === state.selected ? " sel" : "";
+  return L.divIcon({
+    className: "",
+    html: `<div class="ac-icon${sel}" style="--c:var(${altBand(p)});--rot:${p.track ?? 0}deg">${PLANE_SVG}</div>`,
+    iconSize: [28, 28], iconAnchor: [14, 14],
+  });
+}
+function syncMarkers() {
+  for (const [hex, m] of markers) {
+    if (!state.planes.has(hex)) { map.removeLayer(m); markers.delete(hex); }
+  }
+  for (const p of state.planes.values()) {
+    const pos = p.livePos || p;
+    let m = markers.get(p.hex);
+    if (!m) {
+      m = L.marker([pos.lat, pos.lon], { icon: planeIcon(p), title: p.callsign || p.hex })
+        .bindTooltip("", { className: "ac-tip", direction: "right", offset: [12, 0] })
+        .on("click", () => select(p.hex))
+        .addTo(map);
+      markers.set(p.hex, m);
+    } else {
+      m.setLatLng([pos.lat, pos.lon]);
+      m.setIcon(planeIcon(p));
+    }
+    m.setTooltipContent(`${esc(p.callsign || p.reg || p.hex)} · ${altText(p)}`);
+    m.setZIndexOffset(p.hex === state.selected ? 900 : 0);
+  }
+}
+
+// Dead reckoning between refreshes so planes move smoothly
+function tick() {
+  const now = Date.now();
+  for (const p of state.planes.values()) {
+    if (p.onGround || !p.gs || p.track == null) { p.livePos = null; continue; }
+    const ageS = (now - state.fetchedAt) / 1000 + (p.seen || 0);
+    if (ageS > 60) continue;
+    p.livePos = destPoint(p, p.track, p.gs * KM_PER_NM * ageS / 3600);
+    const m = markers.get(p.hex);
+    if (m) m.setLatLng([p.livePos.lat, p.livePos.lon]);
+  }
+  $("clock").textContent = new Date().toISOString().slice(11, 19) + " UTC";
+  if (state.nextAt && !state.inflight) {
+    const s = Math.max(0, Math.ceil((state.nextAt - now) / 1000));
+    $("countdown").textContent = `(${s}s)`;
+  }
+}
+setInterval(tick, 1000);
+
+// ---------- Location ----------
+function setLocChip(kind, text) {
+  const chip = $("locChip");
+  chip.className = "chip " + kind;
+  $("locText").textContent = text;
+}
+function setMe(lat, lon, acc, kind) {
+  const first = !state.me || state.me.kind === "default";
+  const moved = state.me ? haversineKm(state.me, { lat, lon }) : Infinity;
+  state.me = { lat, lon, acc, kind };
+  drawMe();
+  if (kind === "gps") setLocChip("ok", `GPS ±${acc < 1000 ? Math.round(acc) + " m" : fmt(acc / 1000, 1) + " km"}`);
+  else if (kind === "manual") setLocChip("warn", `Manual ${lat.toFixed(3)}, ${lon.toFixed(3)}`);
+  else setLocChip("err", "Default: Delhi");
+  if (first || kind === "manual") fitRadius();
+  // Re-query when position changes meaningfully
+  if (first || kind === "manual" || moved > state.radiusKm * 0.15) refresh();
+}
+
+let watchId = null;
+function startGeo() {
+  if (!("geolocation" in navigator)) { geoFailed("This browser has no location support."); return; }
+  if (!window.isSecureContext) { geoFailed("Location needs HTTPS (or localhost)."); return; }
+  setLocChip("", "Locating…");
+  watchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      if (state.me && state.me.kind === "manual") return; // user override wins
+      setMe(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, "gps");
+      hideBannerIf("geo");
+    },
+    (err) => {
+      const msg = err.code === 1 ? "Location permission was denied." : err.code === 3 ? "Location timed out." : "Your position is unavailable.";
+      geoFailed(msg);
+    },
+    { enableHighAccuracy: false, maximumAge: 30000, timeout: 15000 }
+  );
+}
+function geoFailed(reason) {
+  if (state.me && state.me.kind !== "default") return;
+  showBanner("geo", "err", "Can't get your location",
+    `${esc(reason)} Showing Delhi instead. Allow location in your browser settings, or tap “Pick on map” to set your position.`,
+    [["Pick on map", () => setPicking(true)], ["Try again", () => { if (watchId != null) navigator.geolocation.clearWatch(watchId); startGeo(); }]]);
+  setMe(FALLBACK_POS.lat, FALLBACK_POS.lon, null, "default");
+}
+
+function setPicking(on) {
+  state.picking = on;
+  $("pickBtn").setAttribute("aria-pressed", String(on));
+  $("pickHint").hidden = !on;
+  map.getContainer().classList.toggle("leaflet-picking", on);
+}
+$("pickBtn").addEventListener("click", () => {
+  if (state.me && state.me.kind === "manual" && !state.picking) {
+    // Second tap after a manual pick returns to GPS
+    state.me.kind = "default";
+    $("pickBtn").textContent = "Pick on map";
+    if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    startGeo();
+    return;
+  }
+  setPicking(!state.picking);
+});
+map.on("click", (e) => {
+  if (!state.picking) return;
+  setPicking(false);
+  $("pickBtn").textContent = "Use GPS";
+  hideBannerIf("geo");
+  setMe(e.latlng.lat, e.latlng.lng, null, "manual");
+});
+
+// ---------- Data ----------
+function normalize(ac) {
+  const onGround = ac.alt_baro === "ground";
+  const alt = onGround ? 0 : (typeof ac.alt_baro === "number" ? ac.alt_baro : (typeof ac.alt_geom === "number" ? ac.alt_geom : null));
+  return {
+    hex: String(ac.hex || "").toLowerCase(),
+    callsign: (ac.flight || "").trim().toUpperCase(),
+    reg: ac.r || null, type: ac.t || null, desc: ac.desc || null, op: ac.ownOp || null,
+    alt, onGround,
+    gs: typeof ac.gs === "number" ? ac.gs : null,
+    track: typeof ac.track === "number" ? ac.track : (typeof ac.true_heading === "number" ? ac.true_heading : null),
+    vr: typeof ac.baro_rate === "number" ? ac.baro_rate : (typeof ac.geom_rate === "number" ? ac.geom_rate : null),
+    squawk: ac.squawk || null,
+    lat: ac.lat, lon: ac.lon,
+    seen: typeof ac.seen_pos === "number" ? ac.seen_pos : (ac.seen || 0),
+    military: !!(ac.dbFlags & 1),
+  };
+}
+
+async function fetchJSON(url, opts = {}, ms = 10000) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms);
+  try {
+    const r = await fetch(url, { ...opts, signal: ctl.signal });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+
+async function fetchLive() {
+  const nm = Math.min(250, Math.ceil(state.radiusKm / KM_PER_NM));
+  const la = state.me.lat.toFixed(4), lo = state.me.lon.toFixed(4);
+  const errors = [];
+  for (const src of SOURCES) {
+    try {
+      const j = await fetchJSON(src.url(la, lo, nm));
+      return { source: src.name, list: (j.ac || j.aircraft || []) };
+    } catch (e) { errors.push(`${src.name}: ${e.name === "AbortError" ? "timed out" : e.message}`); }
+  }
+  throw new Error(errors.join(" · "));
+}
+
+async function fetchRoutes(planes) {
+  if (state.demo) return;
+  const want = planes.filter((p) => p.callsign && p.callsign.length >= 3 && !state.routes.has(p.callsign) && !p.onGround);
+  for (let i = 0; i < want.length; i += 40) {
+    const batch = want.slice(i, i + 40);
+    batch.forEach((p) => state.routes.set(p.callsign, null)); // mark as asked
+    try {
+      const res = await fetchJSON(ROUTE_URL, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planes: batch.map((p) => ({ callsign: p.callsign, lat: p.lat, lng: p.lon })) }),
+      }, 12000);
+      for (const r of Array.isArray(res) ? res : []) {
+        const aps = Array.isArray(r._airports) ? r._airports : [];
+        if (r.callsign && aps.length >= 2) {
+          state.routes.set(String(r.callsign).toUpperCase(), {
+            from: aps[0], to: aps[aps.length - 1], via: aps.slice(1, -1),
+            plausible: r.plausible !== false && r.plausible !== 0,
+          });
+        }
+      }
+    } catch (e) {
+      batch.forEach((p) => state.routes.delete(p.callsign)); // allow retry next cycle
+      console.warn("Route lookup failed", e);
+      break;
+    }
+  }
+  render();
+}
+
+async function refresh() {
+  if (!state.me || state.inflight) return;
+  clearTimeout(state.timer);
+  state.inflight = true;
+  $("countdown").textContent = "…";
+  try {
+    const { source, list } = state.demo ? demoData() : await fetchLive();
+    state.source = source;
+    const next = new Map();
+    for (const raw of list) {
+      if (typeof raw.lat !== "number" || typeof raw.lon !== "number") continue;
+      const p = normalize(raw);
+      if (!p.hex) continue;
+      p.dist = haversineKm(state.me, p);
+      if (p.dist > state.radiusKm) continue;
+      p.brg = bearingDeg(state.me, p);
+      next.set(p.hex, p);
+    }
+    state.planes = next;
+    state.fetchedAt = Date.now();
+    if (state.selected && !next.has(state.selected)) state.selected = null;
+    if (!state.demo) hideBannerIf("net");
+    render();
+    fetchRoutes([...next.values()]);
+  } catch (e) {
+    console.error(e);
+    showBanner("net", "err", "Couldn't load live flights",
+      `Both data services failed (${esc(e.message)}). The service may be down, rate-limiting you, or blocked on this network.`,
+      [["Retry", () => refresh()], ["Show demo data", () => setDemo(true)]]);
+  } finally {
+    state.inflight = false;
+    if (!document.hidden) schedule();
+  }
+}
+function schedule() {
+  clearTimeout(state.timer);
+  state.nextAt = Date.now() + REFRESH_MS;
+  state.timer = setTimeout(refresh, REFRESH_MS);
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { clearTimeout(state.timer); state.nextAt = 0; $("countdown").textContent = "(paused)"; }
+  else refresh();
+});
+$("refreshBtn").addEventListener("click", () => refresh());
+$("radius").addEventListener("change", (e) => {
+  state.radiusKm = Number(e.target.value);
+  drawMe(); fitRadius(); refresh();
+});
+
+// ---------- Demo data (clearly labelled, generated around your position) ----------
+const DEMO = [
+  ["AIC101","VT-ALJ","B77W","BOEING 777-300ER",["VIDP","DEL","Indira Gandhi Intl"],["KJFK","JFK","John F Kennedy Intl"],34000,488,310,0],
+  ["IGO6E2","VT-IJK","A20N","AIRBUS A-320neo",["VABB","BOM","Chhatrapati Shivaji Intl"],["VIDP","DEL","Indira Gandhi Intl"],8200,262,25,-1400],
+  ["AKJ1102","VT-YAB","B38M","BOEING 737 MAX 8",["VOBL","BLR","Kempegowda Intl"],["VIDP","DEL","Indira Gandhi Intl"],3100,178,95,-900],
+  ["UAE511","A6-EQB","B77W","BOEING 777-300ER",["OMDB","DXB","Dubai Intl"],["VIDP","DEL","Indira Gandhi Intl"],12500,320,80,-1800],
+  ["SEJ8723","VT-SZK","B738","BOEING 737-800",["VIDP","DEL","Indira Gandhi Intl"],["VAAH","AMD","Ahmedabad"],6400,250,230,2400],
+  ["QTR571","A7-BEB","B77W","BOEING 777-300ER",["OTHH","DOH","Hamad Intl"],["VIDP","DEL","Indira Gandhi Intl"],22000,410,105,-1200],
+  ["BAW142","G-XWBA","A35K","AIRBUS A-350-1000",["VIDP","DEL","Indira Gandhi Intl"],["EGLL","LHR","London Heathrow"],38000,502,300,0],
+  ["AXB1234","VT-BXE","B38M","BOEING 737 MAX 8",["VIDP","DEL","Indira Gandhi Intl"],["VOCI","COK","Kochi Intl"],18000,380,195,1800],
+  ["IGO2341","VT-ISN","A21N","AIRBUS A-321neo",["VECC","CCU","Netaji Subhas Chandra Bose Intl"],["VIDP","DEL","Indira Gandhi Intl"],0,12,280,0],
+  ["SIA403","9V-SMJ","A359","AIRBUS A-350-900",["WSSS","SIN","Singapore Changi"],["VIDP","DEL","Indira Gandhi Intl"],27000,455,320,-600],
+  ["VTRKD",  "VT-RKD","C172","CESSNA 172",null,null,2400,95,140,0],
+  ["THY717","TC-LJA","B77W","BOEING 777-300ER",["LTFM","IST","Istanbul"],["VIDP","DEL","Indira Gandhi Intl"],36000,470,120,0],
+];
+let demoSeed = null;
+function demoData() {
+  if (!demoSeed) {
+    demoSeed = DEMO.map((d, i) => {
+      const brg = (i * 137.5) % 360, km = state.radiusKm * (0.12 + ((i * 0.618) % 0.85));
+      const pos = destPoint(state.me, brg, km);
+      return { d, pos, hex: "d" + (100000 + i * 7919).toString(16).slice(-5) };
+    });
+  }
+  const list = demoSeed.map(({ d, pos, hex }) => {
+    const [flight, r, t, desc, from, to, alt, gs, track, vr] = d;
+    if (from && to) state.routes.set(flight, { from: { icao: from[0], iata: from[1], name: from[2] }, to: { icao: to[0], iata: to[1], name: to[2] }, via: [], plausible: true });
+    return { hex, flight, r, t, desc, alt_baro: alt === 0 ? "ground" : alt, gs, track, baro_rate: vr, squawk: flight === "QTR571" ? "7700" : "2" + String(1000 + (hex.charCodeAt(2) * 37) % 6777).slice(-3), lat: pos.lat, lon: pos.lon, seen_pos: 1 };
+  });
+  return { source: "demo", list };
+}
+function setDemo(on) {
+  state.demo = on;
+  demoSeed = null;
+  if (on) {
+    showBanner("demo", "demo", "Demo data",
+      "These aircraft are made up and placed around your position so you can see how the tracker works. They are not real flights.",
+      [["Back to live data", () => setDemo(false)]]);
+  } else { hideBannerIf("demo"); state.routes.clear(); }
+  state.selected = null;
+  refresh();
+}
+
+// ---------- Banner ----------
+let bannerKey = null;
+function showBanner(key, kind, title, html, actions = []) {
+  if (bannerKey === "demo" && key === "net") return; // demo is in charge
+  bannerKey = key;
+  const b = $("banner");
+  b.className = "banner " + kind;
+  b.innerHTML = `<strong>${esc(title)}</strong>${html}<div class="row"></div>`;
+  const row = b.querySelector(".row");
+  actions.forEach(([label, fn]) => {
+    const btn = document.createElement("button");
+    btn.className = "btn"; btn.type = "button"; btn.textContent = label;
+    btn.addEventListener("click", fn);
+    row.appendChild(btn);
+  });
+  b.hidden = false;
+}
+function hideBannerIf(key) { if (bannerKey === key) { $("banner").hidden = true; bannerKey = null; } }
+
+// ---------- Rendering ----------
+function routeShort(p) {
+  const r = state.routes.get(p.callsign);
+  if (!r) return null;
+  const code = (a) => a.iata || a.icao || "?";
+  return `${code(r.from)} → ${code(r.to)}${r.plausible ? "" : " ?"}`;
+}
+
+function render() {
+  const planes = [...state.planes.values()].sort((a, b) => a.dist - b.dist);
+  $("sCount").textContent = planes.length;
+  $("sNear").textContent = planes.length ? fmt(planes[0].dist, 1) + " km" : "–";
+  const airborne = planes.filter((p) => !p.onGround && p.alt != null);
+  $("sHigh").textContent = airborne.length ? altText(airborne.reduce((a, b) => (b.alt > a.alt ? b : a))) : "–";
+  $("updated").textContent = state.fetchedAt ? "Updated " + new Date(state.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "Not updated yet";
+  $("srcNote").textContent = state.source && state.source !== "demo" ? `Now using ${state.source}.` : "";
+
+  const ul = $("strips");
+  if (!planes.length) {
+    ul.innerHTML = state.fetchedAt
+      ? `<li class="empty">No aircraft within ${state.radiusKm} km right now. Try a larger radius.</li>`
+      : `<li class="empty">Looking for aircraft near you…</li>`;
+  } else {
+    ul.innerHTML = planes.map((p) => {
+      const r = routeShort(p);
+      const airline = airlineOf(p);
+      const sub = [airline, p.type].filter(Boolean).join(" · ") || (p.reg || "Unknown aircraft");
+      const sq = SQUAWK[p.squawk] ? `<span class="sq" title="${SQUAWK[p.squawk]}">${esc(p.squawk)}</span>` : "";
+      return `<li class="strip${p.hex === state.selected ? " sel" : ""}" data-hex="${esc(p.hex)}" tabindex="0" role="button" aria-label="${esc(p.callsign || p.hex)}, ${fmt(p.dist, 1)} km ${compass(p.brg)}" style="--c:var(${altBand(p)})">
+        <div class="band"></div>
+        <div class="a">
+          <div class="cs">${esc(p.callsign || p.reg || p.hex.toUpperCase())}${sq}</div>
+          <div class="sub">${esc(sub)}</div>
+          <div class="route${r ? "" : " unk"}">${r ? esc(r) : p.onGround ? "On the ground" : "Route unknown"}</div>
+        </div>
+        <div class="b">
+          <div class="alt">${altText(p)}</div>
+          <div>${p.gs != null ? fmt(p.gs) + " kt" : "—"}</div>
+          <div class="dist"><span class="arrow" style="transform:rotate(${p.brg}deg)">↑</span> ${fmt(p.dist, 1)} km ${compass(p.brg)}</div>
+        </div>
+      </li>`;
+    }).join("");
+  }
+  syncMarkers();
+  if (state.selected) renderDetail();
+}
+
+function renderDetail() {
+  const p = state.planes.get(state.selected);
+  const v = $("detailView");
+  if (!p) { closeDetail(); return; }
+  const r = state.routes.get(p.callsign);
+  const airline = airlineOf(p);
+  const sqName = SQUAWK[p.squawk];
+  const vr = p.vr == null || p.onGround ? "—" : Math.abs(p.vr) < 200 ? "Level" : (p.vr > 0 ? "▲ Climbing " : "▼ Descending ") + fmt(Math.abs(p.vr)) + " ft/min";
+  const ap = (a) => `<code>${esc(a.iata || a.icao || "?")}</code><span>${esc(a.name || a.location || a.icao || "")}</span>`;
+  const legs = r
+    ? `<div class="legs"><div class="leg">${ap(r.from)}</div><div class="mid">→</div><div class="leg to">${ap(r.to)}</div>
+       ${r.via.length ? `<div class="note">Via ${r.via.map((a) => esc(a.iata || a.icao)).join(", ")}</div>` : ""}
+       ${r.plausible ? "" : `<div class="note">This route doesn't match the plane's position well. It may be wrong.</div>`}</div>`
+    : `<div class="legs"><div class="note" style="grid-column:1/-1">${p.onGround ? "Aircraft is on the ground." : p.callsign ? "No route found for this callsign." : "No callsign broadcast, so the route can't be looked up."}</div></div>`;
+  const ageS = Math.round((Date.now() - state.fetchedAt) / 1000 + (p.seen || 0));
+
+  v.innerHTML = `
+    <button class="btn back" type="button" id="backBtn">← All aircraft</button>
+    <div class="dhead">
+      <div>
+        <div class="cs">${esc(p.callsign || p.reg || p.hex.toUpperCase())}</div>
+        <div class="op">${esc(airline || "Operator unknown")}</div>
+      </div>
+      ${sqName ? `<span class="sq" style="font-size:13px;line-height:24px;padding:0 8px">${esc(p.squawk)} · ${sqName}</span>` : ""}
+    </div>
+    ${legs}
+    <dl class="facts">
+      <div><dt>Altitude</dt><dd>${p.onGround ? "On ground" : p.alt != null ? fmt(p.alt) + " ft <small>" + fmt(p.alt * 0.3048) + " m</small>" : "—"}</dd></div>
+      <div><dt>Vertical</dt><dd>${vr}</dd></div>
+      <div><dt>Ground speed</dt><dd>${p.gs != null ? fmt(p.gs) + " kt <small>" + fmt(p.gs * KM_PER_NM) + " km/h</small>" : "—"}</dd></div>
+      <div><dt>Heading</dt><dd>${p.track != null ? fmt(p.track) + "° <small>" + compass(p.track) + "</small>" : "—"}</dd></div>
+      <div><dt>From you</dt><dd>${fmt(p.dist, 1)} km <small>${compass(p.brg)} · ${fmt(p.brg)}°</small></dd></div>
+      <div><dt>Elevation angle</dt><dd>${p.onGround || p.alt == null ? "—" : fmt(deg(Math.atan2(p.alt * 0.0003048, p.dist)), 0) + "° <small>above horizon</small>"}</dd></div>
+      <div><dt>Aircraft</dt><dd>${esc(p.desc || p.type || "—")}</dd></div>
+      <div><dt>Registration</dt><dd>${esc(p.reg || "—")}</dd></div>
+      <div><dt>Squawk</dt><dd>${esc(p.squawk || "—")}</dd></div>
+      <div><dt>ICAO hex</dt><dd>${esc(p.hex.toUpperCase())}</dd></div>
+      <div><dt>Last signal</dt><dd>${ageS}s ago</dd></div>
+      <div><dt>Position</dt><dd><small>${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}</small></dd></div>
+    </dl>
+    ${state.demo ? "" : `<div class="links">
+      <a href="https://globe.adsb.lol/?icao=${encodeURIComponent(p.hex)}" target="_blank" rel="noopener">Track on ADSB.lol</a>
+      ${p.callsign ? `<a href="https://www.flightaware.com/live/flight/${encodeURIComponent(p.callsign)}" target="_blank" rel="noopener">FlightAware</a>
+      <a href="https://www.flightradar24.com/${encodeURIComponent(p.callsign)}" target="_blank" rel="noopener">Flightradar24</a>` : ""}
+    </div>`}`;
+  $("backBtn").addEventListener("click", closeDetail);
+}
+
+function select(hex) {
+  state.selected = hex;
+  $("listView").hidden = true;
+  $("detailView").hidden = false;
+  render();
+  const p = state.planes.get(hex);
+  if (p) { const pos = p.livePos || p; map.panTo([pos.lat, pos.lon]); }
+}
+function closeDetail() {
+  state.selected = null;
+  $("detailView").hidden = true;
+  $("listView").hidden = false;
+  render();
+}
+$("strips").addEventListener("click", (e) => { const li = e.target.closest(".strip"); if (li) select(li.dataset.hex); });
+$("strips").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const li = e.target.closest(".strip"); if (li) { e.preventDefault(); select(li.dataset.hex); }
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.selected) closeDetail(); });
+
+// ---------- Boot ----------
+if (new URLSearchParams(location.search).has("demo")) state.demo = true;
+render();
+startGeo();
+if (state.demo) setTimeout(() => setDemo(true), 0);
+</script>
+</body>
+</html>
