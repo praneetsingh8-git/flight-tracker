@@ -19,8 +19,11 @@ A **Flights | Trains** toggle switches between them (remembered per browser).
 - **VIA Rail:** positions, speed, next stop, and VIA's own scheduled vs estimated times (on time / late / early)
   from the public tracker feed behind tsimobile.viarail.ca, proxied at `/api/via/*`. It's unofficial and can
   change or disappear without notice.
-- **GO Transit:** not yet. Live GO data only comes from the Metrolinx Open Data API, which needs a free key
-  (manual approval). Register at https://api.openmetrolinx.com/OpenDataAPI/Help/Registration/en.
+- **GO Transit:** live trains from the Metrolinx Open Data API through a Netlify Function
+  (`netlify/functions/go-trains.mts`, served at `/api/go/trains`) so the key never reaches the browser.
+  It is **off until `METROLINX_KEY` is set** in Netlify (Project configuration → Environment variables,
+  scope must include Functions), then redeploy. Upstream calls are cached 15 s; Metrolinx disables keys
+  that call too often. Built from the documented response format; verify on first real run.
 - TTC subway: no live positions are published.
 
 ## Run it
