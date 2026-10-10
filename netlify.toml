@@ -1,0 +1,16 @@
+# Static site: index.html at the repo root, no build step.
+[build]
+  publish = "."
+
+# Same-origin proxies so the browser never makes cross-origin calls (avoids CORS blocks).
+[[redirects]]
+  from = "/api/adsblol/*"
+  to = "https://api.adsb.lol/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/airplaneslive/*"
+  to = "https://api.airplanes.live/:splat"
+  status = 200
+  force = true

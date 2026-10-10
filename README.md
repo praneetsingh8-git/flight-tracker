@@ -20,11 +20,18 @@ python3 -m http.server 8000
 # open http://localhost:8000/?demo    (demo data)
 ```
 
-Or drop `index.html` on any static host (GitHub Pages, Netlify).
+### Hosting: use Netlify, not GitHub Pages
+
+The flight-data APIs block direct calls from a browser on another site (CORS), which is what
+GitHub Pages does. `netlify.toml` adds same-origin rewrites (`/api/adsblol/*`, `/api/airplaneslive/*`)
+so the browser only ever talks to the site itself. On Netlify: import this repo, no build command,
+publish directory `.`.
+
+A local `python3 -m http.server` has no rewrites, so live data will fail locally the same way; use `?demo`.
 
 ## Known limits
 
 - Coverage depends on volunteer ADS-B receivers. Rural areas can show few or no aircraft.
 - Planes without ADS-B (many small aircraft, some military) don't appear.
 - Free APIs can rate-limit; there is no backend or caching yet.
-- Not tested against the live APIs from the build environment (network blocked there); verify on first real run.
+- Map tiles come from openstreetmap.org, whose usage policy is fine for personal/light use but not heavy traffic.

@@ -28,6 +28,7 @@
   --alt-3: #2f66d6;
   --alt-4: #7a48d4;
   --shadow: 0 1px 2px rgba(20,34,48,.08), 0 6px 20px rgba(20,34,48,.08);
+  --tile-filter: saturate(.75);
   --f-display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
   --f-body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
   --f-data: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
@@ -40,6 +41,7 @@
     --sel: #ffb53d; --danger: #ff5c5c;
     --alt-gnd: #7b8794; --alt-1: #3cc274; --alt-2: #2bb9c6; --alt-3: #5b8cff; --alt-4: #a57cff;
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+    --tile-filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.5);
     color-scheme: dark;
   }
 }
@@ -49,6 +51,7 @@
   --sel: #ffb53d; --danger: #ff5c5c;
   --alt-gnd: #7b8794; --alt-1: #3cc274; --alt-2: #2bb9c6; --alt-3: #5b8cff; --alt-4: #a57cff;
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+  --tile-filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.5);
   color-scheme: dark;
 }
 
@@ -186,6 +189,7 @@ dl.facts dd small { font-weight: 400; color: var(--muted); }
   max-width: calc(100% - 32px); text-align: center;
 }
 .leaflet-container { font-family: var(--f-body); }
+.leaflet-tile-pane { filter: var(--tile-filter); }
 .leaflet-tooltip.ac-tip { font: 600 12px/1.2 var(--f-data); padding: 2px 6px; }
 .leaflet-picking { cursor: crosshair; }
 
@@ -261,11 +265,15 @@ dl.facts dd small { font-weight: 400; color: var(--muted); }
 // ---------- Config ----------
 const REFRESH_MS = 15000;
 const KM_PER_NM = 1.852;
+// The /api/* paths are same-origin rewrites to the real services (see netlify.toml), which
+// avoids the browser's cross-origin (CORS) block. Direct URLs are a fallback for hosts without them.
 const SOURCES = [
+  { name: "adsb.lol",       url: (la, lo, nm) => `/api/adsblol/v2/point/${la}/${lo}/${nm}` },
+  { name: "airplanes.live", url: (la, lo, nm) => `/api/airplaneslive/v2/point/${la}/${lo}/${nm}` },
   { name: "adsb.lol",       url: (la, lo, nm) => `https://api.adsb.lol/v2/point/${la}/${lo}/${nm}` },
   { name: "airplanes.live", url: (la, lo, nm) => `https://api.airplanes.live/v2/point/${la}/${lo}/${nm}` },
 ];
-const ROUTE_URL = "https://api.adsb.lol/api/0/routeset";
+const ROUTE_URLS = ["/api/adsblol/api/0/routeset", "https://api.adsb.lol/api/0/routeset"];
 const FALLBACK_POS = { lat: 28.5562, lon: 77.1000 }; // Delhi IGI, used only until a real position arrives
 
 // ICAO airline designator -> name (first 3 letters of an airline callsign)
@@ -346,18 +354,16 @@ const SQUAWK = { "7500": "Hijack", "7600": "Radio failure", "7700": "Emergency" 
 const map = L.map("map", { zoomControl: true, attributionControl: true, worldCopyJump: true })
   .setView([FALLBACK_POS.lat, FALLBACK_POS.lon], 9);
 
-const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
-const isDark = () => document.documentElement.dataset.theme === "dark" || (document.documentElement.dataset.theme !== "light" && darkQuery.matches);
 let tiles = null;
 function setTiles() {
   if (tiles) map.removeLayer(tiles);
-  tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${isDark() ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png`, {
-    maxZoom: 18, subdomains: "abcd",
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  // OpenStreetMap standard tiles (no key). Dark mode is a CSS filter on the tile pane.
+  tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
 }
 setTiles();
-darkQuery.addEventListener?.("change", setTiles);
 
 let meMarker = null, meCircle = null, accCircle = null;
 const markers = new Map(); // hex -> L.marker
@@ -539,7 +545,8 @@ async function fetchLive() {
   for (const src of SOURCES) {
     try {
       const j = await fetchJSON(src.url(la, lo, nm));
-      return { source: src.name, list: (j.ac || j.aircraft || []) };
+      if (!j || !Array.isArray(j.ac || j.aircraft)) throw new Error("unexpected response");
+      return { source: src.name, list: (j.ac || j.aircraft) };
     } catch (e) { errors.push(`${src.name}: ${e.name === "AbortError" ? "timed out" : e.message}`); }
   }
   throw new Error(errors.join(" · "));
@@ -552,10 +559,13 @@ async function fetchRoutes(planes) {
     const batch = want.slice(i, i + 40);
     batch.forEach((p) => state.routes.set(p.callsign, null)); // mark as asked
     try {
-      const res = await fetchJSON(ROUTE_URL, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planes: batch.map((p) => ({ callsign: p.callsign, lat: p.lat, lng: p.lon })) }),
-      }, 12000);
+      const body = JSON.stringify({ planes: batch.map((p) => ({ callsign: p.callsign, lat: p.lat, lng: p.lon })) });
+      let res = null, lastErr = null;
+      for (const url of ROUTE_URLS) {
+        try { res = await fetchJSON(url, { method: "POST", headers: { "Content-Type": "application/json" }, body }, 12000); break; }
+        catch (e) { lastErr = e; }
+      }
+      if (!res) throw lastErr;
       for (const r of Array.isArray(res) ? res : []) {
         const aps = Array.isArray(r._airports) ? r._airports : [];
         if (r.callsign && aps.length >= 2) {
