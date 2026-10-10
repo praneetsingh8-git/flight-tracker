@@ -16,6 +16,12 @@
   force = true
 
 [[redirects]]
+  from = "/api/via/*"
+  to = "https://tsimobile.viarail.ca/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/api/airplaneslive/*"
   to = "https://api.airplanes.live/:splat"
   status = 200
