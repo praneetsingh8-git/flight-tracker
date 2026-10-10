@@ -77,6 +77,34 @@ button, select, input { font: inherit; color: inherit; }
 .brand h1 { margin: 0; font: 700 24px/1 var(--f-display); letter-spacing: .02em; text-transform: uppercase; }
 .brand span { font: 500 13px/1 var(--f-data); color: var(--muted); }
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.seg { display: inline-flex; padding: 3px; gap: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
+.seg button { height: 28px; padding: 0 14px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; font-weight: 600; font-size: 14px; color: var(--muted); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+
+/* Trains */
+.pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font: 600 12px/18px var(--f-data); white-space: nowrap; }
+.pill.ok { background: color-mix(in srgb, var(--alt-1) 18%, transparent); color: var(--alt-1); }
+.pill.early { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.pill.late { background: color-mix(in srgb, var(--sel) 22%, transparent); color: var(--sel); }
+.pill.bad { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+.pill.na { background: var(--surface-2); color: var(--muted); }
+.tr-icon {
+  display: grid; place-items: center; min-width: 30px; height: 22px; padding: 0 5px; border-radius: 6px;
+  font: 700 11px/1 var(--f-data); color: #fff; background: var(--c, var(--accent)); border: 2px solid var(--surface);
+  box-shadow: 0 1px 3px rgba(0,0,0,.4); white-space: nowrap;
+}
+.tr-icon.sel { outline: 3px solid var(--sel); }
+.stops { list-style: none; margin: 12px 0; padding: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.stops li { display: grid; grid-template-columns: 14px 1fr auto auto; gap: 10px; align-items: center; padding: 7px 10px; background: var(--surface); border-top: 1px solid var(--line); font-size: 14px; }
+.stops li:first-child { border-top: 0; }
+.stops li i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--muted); }
+.stops li.done { color: var(--muted); }
+.stops li.done i { background: var(--muted); }
+.stops li.next { background: var(--surface-2); font-weight: 600; }
+.stops li.next i { border-color: var(--accent); background: var(--accent); }
+.stops time { font: 500 13px/1.2 var(--f-data); font-variant-numeric: tabular-nums; text-align: right; }
+.stops time.sch { color: var(--muted); text-decoration: line-through; }
+.stops time.sch.same { text-decoration: none; }
 .chip {
   display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px;
   border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2);
@@ -252,6 +280,10 @@ dl.facts dd small { font-weight: 400; color: var(--muted); }
 <body>
 <header class="top">
   <div class="brand"><h1>Flight Tracker</h1><span id="clock">--:--:-- UTC</span></div>
+  <div class="seg" role="group" aria-label="What to track">
+    <button type="button" id="modeFlights" aria-pressed="true">Flights</button>
+    <button type="button" id="modeTrains" aria-pressed="false">Trains</button>
+  </div>
   <div class="controls">
     <span class="chip" id="locChip" title="Your position"><span class="dot"></span><span id="locText">Locating…</span></span>
     <label class="inline" for="radius"><span class="lbl">Radius</span>
@@ -272,7 +304,7 @@ dl.facts dd small { font-weight: 400; color: var(--muted); }
   <div class="mapwrap">
     <div id="map" aria-label="Map of aircraft near you"></div>
     <div class="pickhint" id="pickHint" hidden>Tap the map to set your position</div>
-    <div class="legend" aria-label="Altitude colours">
+    <div class="legend" id="legend" aria-label="Altitude colours">
       <div><i style="background:var(--alt-4)"></i>&gt; 30,000 ft</div>
       <div><i style="background:var(--alt-3)"></i>15–30,000</div>
       <div><i style="background:var(--alt-2)"></i>5–15,000</div>
@@ -286,17 +318,17 @@ dl.facts dd small { font-weight: 400; color: var(--muted); }
 
     <section id="listView" style="display:flex;flex-direction:column;min-height:0;flex:1">
       <div class="summary">
-        <div><b id="sCount">–</b><small>In the air</small></div>
+        <div><b id="sCount">–</b><small id="sCountL">In the air</small></div>
         <div><b id="sNear">–</b><small>Nearest</small></div>
-        <div><b id="sHigh">–</b><small>Highest</small></div>
+        <div><b id="sHigh">–</b><small id="sHighL">Highest</small></div>
       </div>
-      <div class="listhead"><label class="toggle" for="showGround"><input type="checkbox" id="showGround"> <span id="groundLbl">Show ground traffic</span></label><span id="updated">Not updated yet</span></div>
+      <div class="listhead"><label class="toggle" for="showGround" id="groundWrap"><input type="checkbox" id="showGround"> <span id="groundLbl">Show ground traffic</span></label><label class="toggle" for="showAllTrains" id="allTrainsWrap" hidden><input type="checkbox" id="showAllTrains"> <span id="allTrainsLbl">Show all VIA trains</span></label><span id="updated">Not updated yet</span></div>
       <ul class="strips" id="strips"></ul>
     </section>
 
     <section id="detailView" class="detail" hidden></section>
 
-    <div class="foot">Live data: <a href="https://adsb.lol" target="_blank" rel="noopener">adsb.lol</a> (ODbL), fallback <a href="https://airplanes.live" target="_blank" rel="noopener">airplanes.live</a>. Routes from <a href="https://adsb.im" target="_blank" rel="noopener">adsb.im</a> are best-effort and may be wrong. Logos via avs.io. <span id="srcNote"></span></div>
+    <div class="foot"><span id="footFlights">Live data: <a href="https://adsb.lol" target="_blank" rel="noopener">adsb.lol</a> (ODbL), fallback <a href="https://airplanes.live" target="_blank" rel="noopener">airplanes.live</a>. Routes from <a href="https://adsb.im" target="_blank" rel="noopener">adsb.im</a> are best-effort and may be wrong. Logos via avs.io. <span id="srcNote"></span></span><span id="footTrains" hidden>Train data from VIA Rail's public tracker (<a href="https://tsimobile.viarail.ca" target="_blank" rel="noopener">tsimobile.viarail.ca</a>), an unofficial feed that can change without notice. GO Transit trains will appear once the Metrolinx data key is set up.</span></div>
   </aside>
 </main>
 
@@ -306,6 +338,9 @@ dl.facts dd small { font-weight: 400; color: var(--muted); }
 
 // ---------- Config ----------
 const REFRESH_MS = 15000;
+const TRAIN_REFRESH_MS = 30000;
+// VIA Rail's public tracker feed (unofficial). Same-origin rewrite first, direct as fallback.
+const VIA_URLS = ["/api/via/data/allData.json", "https://tsimobile.viarail.ca/data/allData.json"];
 const KM_PER_NM = 1.852;
 // The /api/* paths are same-origin rewrites to the real services (see netlify.toml), which
 // avoids the browser's cross-origin (CORS) block. Direct URLs are a fallback for hosts without them.
@@ -369,7 +404,12 @@ const state = {
   picking: false,
   inflight: false,
   showGround: false,  // ground traffic (taxiing planes, airport vehicles) hidden by default
+  mode: "flights",    // "flights" | "trains"
+  trains: new Map(),  // id -> train
+  trainsRunning: 0,   // VIA trains with a position anywhere in Canada
+  showAllTrains: false,
 };
+try { if (localStorage.getItem("mode") === "trains") state.mode = "trains"; } catch (e) { /* storage unavailable */ }
 
 // ---------- Helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -508,6 +548,7 @@ function syncMarkers() {
 // Dead reckoning between refreshes so planes move smoothly
 function tick() {
   const now = Date.now();
+  if (state.mode === "trains") { $("clock").textContent = new Date().toISOString().slice(11, 19) + " UTC"; tickCountdown(now); return; }
   for (const p of state.planes.values()) {
     if (p.onGround || !p.gs || p.track == null) { p.livePos = null; continue; }
     const ageS = (now - state.fetchedAt) / 1000 + (p.seen || 0);
@@ -517,6 +558,9 @@ function tick() {
     if (m) m.setLatLng([p.livePos.lat, p.livePos.lon]);
   }
   $("clock").textContent = new Date().toISOString().slice(11, 19) + " UTC";
+  tickCountdown(now);
+}
+function tickCountdown(now) {
   if (state.nextAt && !state.inflight) {
     const s = Math.max(0, Math.ceil((state.nextAt - now) / 1000));
     $("countdown").textContent = `(${s}s)`;
@@ -721,6 +765,7 @@ async function refresh() {
   state.inflight = true;
   $("countdown").textContent = "…";
   try {
+    if (state.mode === "trains") { await loadTrains(); return; }
     const { source, list } = state.demo ? demoData() : await fetchLive();
     state.source = source;
     const next = new Map();
@@ -741,6 +786,12 @@ async function refresh() {
     fetchRoutes([...next.values()]);
   } catch (e) {
     console.error(e);
+    if (state.mode === "trains") {
+      showBanner("net", "err", "Couldn't load VIA Rail trains",
+        `The VIA Rail feed didn't answer (${esc(e.message)}). It's an unofficial feed, so it may be down or may have changed.`,
+        [["Retry", () => refresh()]]);
+      return;
+    }
     showBanner("net", "err", "Couldn't load live flights",
       `Both data services failed (${esc(e.message)}). The service may be down, rate-limiting you, or blocked on this network.`,
       [["Retry", () => refresh()], ["Show demo data", () => setDemo(true)]]);
@@ -751,8 +802,9 @@ async function refresh() {
 }
 function schedule() {
   clearTimeout(state.timer);
-  state.nextAt = Date.now() + REFRESH_MS;
-  state.timer = setTimeout(refresh, REFRESH_MS);
+  const ms = state.mode === "trains" ? TRAIN_REFRESH_MS : REFRESH_MS;
+  state.nextAt = Date.now() + ms;
+  state.timer = setTimeout(refresh, ms);
 }
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { clearTimeout(state.timer); state.nextAt = 0; $("countdown").textContent = "(paused)"; }
@@ -929,6 +981,7 @@ function progressLine(info) {
 }
 
 function render() {
+  if (state.mode === "trains") { renderTrains(); return; }
   const all = [...state.planes.values()];
   const air = all.filter((p) => !isGround(p));
   const list = (state.showGround ? all : air).sort((a, b) => isGround(a) - isGround(b) || a.dist - b.dist);
@@ -976,6 +1029,7 @@ function render() {
 }
 
 function renderDetail() {
+  if (state.mode === "trains") { renderTrainDetail(); return; }
   const p = state.planes.get(state.selected);
   const v = $("detailView");
   if (!p) { closeDetail(); return; }
@@ -1052,6 +1106,7 @@ function renderDetail() {
 }
 
 function select(hex) {
+  if (state.mode === "trains") { selectTrain(hex); return; }
   state.selected = hex;
   $("listView").hidden = true;
   $("detailView").hidden = false;
@@ -1065,7 +1120,7 @@ function closeDetail() {
   $("detailView").hidden = true;
   $("listView").hidden = false;
   render();
-  fitRadius();
+  if (state.mode === "trains" && state.showAllTrains) fitTrains(); else fitRadius();
 }
 $("showGround").addEventListener("change", (e) => { state.showGround = e.target.checked; render(); });
 $("strips").addEventListener("click", (e) => { const li = e.target.closest(".strip"); if (li) select(li.dataset.hex); });
@@ -1075,8 +1130,265 @@ $("strips").addEventListener("keydown", (e) => {
 });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.selected) closeDetail(); });
 
+// ---------- Trains: VIA Rail ----------
+const trainMarkers = new Map(); // id -> L.marker
+const titleCase = (t) => String(t || "").toLowerCase().replace(/(^|[\s\-/'(])([a-zà-ÿ])/g, (m, a, b) => a + b.toUpperCase());
+const minsBetween = (a, b) => (a && b ? Math.round((Date.parse(b) - Date.parse(a)) / 60000) : null);
+
+// One VIA feed entry -> train. Stops keep scheduled and estimated times (ISO with offset) and the station's time zone.
+function parseViaTrain(key, t) {
+  if (!t || typeof t.lat !== "number" || typeof t.lng !== "number" || t.arrived) return null;
+  const stops = (Array.isArray(t.times) ? t.times : []).map((x) => {
+    const sched = (x.arrival && x.arrival.scheduled) || x.scheduled || null;
+    const est = (x.arrival && x.arrival.estimated) || x.estimated || null;
+    return {
+      name: x.station || x.code || "?", code: x.code || "", tz: x.tz || undefined, sched, est,
+      passed: x.eta === "ARR",
+      delay: typeof x.diffMin === "number" ? x.diffMin : minsBetween(sched, est),
+    };
+  });
+  const next = stops.find((x) => !x.passed) || stops[stops.length - 1] || null;
+  const dest = stops[stops.length - 1] || null;
+  return {
+    id: String(key), number: String(key).split(" ")[0],
+    from: titleCase(t.from), to: titleCase(t.to),
+    lat: t.lat, lon: t.lng, speed: typeof t.speed === "number" ? t.speed : null,
+    heading: typeof t.direction === "number" ? t.direction : null,
+    poll: t.poll ? Date.parse(t.poll) : null,
+    serviceDate: t.instance || null,
+    stops, next, dest,
+    delay: next ? next.delay : null,
+    passedCount: stops.filter((x) => x.passed).length,
+  };
+}
+// Lateness at the next stop -> label + colour class
+function trainStatus(tr) {
+  const d = tr.delay;
+  if (d == null) return { cls: "na", text: "No estimate" };
+  if (d <= -2) return { cls: "early", text: `${-d} min early` };
+  if (d <= 5) return { cls: "ok", text: "On time" };
+  if (d <= 15) return { cls: "late", text: `${d} min late` };
+  return { cls: "bad", text: `${d} min late` };
+}
+const STATUS_VAR = { ok: "--alt-1", early: "--accent", late: "--sel", bad: "--danger", na: "--muted" };
+function stationTime(iso, tz) {
+  if (!iso) return "—";
+  try { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: tz }); }
+  catch (e) { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+}
+
+async function loadTrains() {
+  let data = null, lastErr = null;
+  for (const url of VIA_URLS) {
+    try { data = await fetchJSON(url, {}, 15000); if (data && typeof data === "object" && !Array.isArray(data)) break; data = null; }
+    catch (e) { lastErr = e; }
+  }
+  if (!data) throw lastErr || new Error("unexpected response");
+  const next = new Map();
+  for (const [key, t] of Object.entries(data)) {
+    const tr = parseViaTrain(key, t);
+    if (!tr) continue;
+    tr.dist = haversineKm(state.me, tr);
+    tr.brg = bearingDeg(state.me, tr);
+    next.set(tr.id, tr);
+  }
+  state.trains = next;
+  state.trainsRunning = next.size;
+  state.fetchedAt = Date.now();
+  state.source = "VIA Rail";
+  if (state.selected && !next.has(state.selected)) state.selected = null;
+  hideBannerIf("net");
+  render();
+}
+
+const trainShown = (tr) => state.showAllTrains || tr.dist <= state.radiusKm || tr.id === state.selected;
+function syncTrainMarkers() {
+  for (const [id, m] of trainMarkers) {
+    const tr = state.trains.get(id);
+    if (!tr || !trainShown(tr)) { map.removeLayer(m); trainMarkers.delete(id); }
+  }
+  for (const tr of state.trains.values()) {
+    if (!trainShown(tr)) continue;
+    const st = trainStatus(tr);
+    const icon = L.divIcon({
+      className: "",
+      html: `<div class="tr-icon${tr.id === state.selected ? " sel" : ""}" style="--c:var(${STATUS_VAR[st.cls]})">${esc(tr.number)}</div>`,
+      iconSize: [36, 22], iconAnchor: [18, 11],
+    });
+    let m = trainMarkers.get(tr.id);
+    if (!m) {
+      m = L.marker([tr.lat, tr.lon], { icon, title: `VIA ${tr.number}` })
+        .bindTooltip("", { className: "ac-tip", direction: "right", offset: [14, 0] })
+        .on("click", () => select(tr.id))
+        .addTo(map);
+      trainMarkers.set(tr.id, m);
+    } else { m.setLatLng([tr.lat, tr.lon]); m.setIcon(icon); }
+    m.setTooltipContent(`VIA ${esc(tr.number)} · ${esc(tr.from)} → ${esc(tr.to)} · ${st.text}`);
+    m.setZIndexOffset(tr.id === state.selected ? 900 : 0);
+  }
+}
+function fitTrains() {
+  const pts = [...state.trains.values()].map((t) => [t.lat, t.lon]);
+  if (state.me) pts.push([state.me.lat, state.me.lon]);
+  if (pts.length > 1) map.fitBounds(L.latLngBounds(pts), { padding: [30, 30] });
+}
+
+// Share of the trip done by scheduled time. Null when the feed lacks the first and last times.
+function trainProgress(tr) {
+  const first = tr.stops[0], last = tr.dest;
+  const t0 = first && Date.parse((first.passed && first.est) || first.sched);
+  const t1 = last && Date.parse(last.est || last.sched);
+  if (!t0 || !t1 || t1 <= t0 || first === last) return null;
+  return Math.max(0, Math.min(1, (Date.now() - t0) / (t1 - t0)));
+}
+function viaLogo(big) {
+  return `<span class="logo${big ? " lg" : ""}" aria-hidden="true"><b>VIA</b><img src="${LOGO_URL("2R")}" alt="" loading="lazy" onerror="this.remove()"></span>`;
+}
+
+function renderTrains() {
+  const all = [...state.trains.values()].sort((a, b) => a.dist - b.dist);
+  const near = all.filter((t) => t.dist <= state.radiusKm);
+  const list = state.showAllTrains ? all : near;
+  $("sCount").textContent = near.length;
+  $("sNear").textContent = all.length ? fmt(all[0].dist, all[0].dist < 100 ? 1 : 0) + " km" : "–";
+  $("sHigh").textContent = list.filter((t) => ["late", "bad"].includes(trainStatus(t).cls)).length;
+  $("updated").textContent = state.fetchedAt ? "Updated " + new Date(state.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "Not updated yet";
+  $("allTrainsLbl").textContent = `Show all running VIA trains (${state.trainsRunning})`;
+
+  const ul = $("strips");
+  if (!list.length) {
+    ul.innerHTML = state.fetchedAt
+      ? `<li class="empty">No VIA trains within ${state.radiusKm} km right now.${state.trainsRunning ? ` ${state.trainsRunning} are running elsewhere in Canada. Tick “Show all running VIA trains” to see them.` : " No VIA trains are reporting a position at the moment."}</li>`
+      : `<li class="empty">Looking for trains near you…</li>`;
+  } else {
+    ul.innerHTML = list.map((tr) => {
+      const st = trainStatus(tr);
+      const toDest = tr.next && tr.next === tr.dest;
+      const nextTxt = tr.next && !toDest ? `Next: ${esc(tr.next.name)} ${stationTime(tr.next.est || tr.next.sched, tr.next.tz)} · ` : "";
+      const pct = trainProgress(tr);
+      return `<li class="strip${tr.id === state.selected ? " sel" : ""}" data-hex="${esc(tr.id)}" tabindex="0" role="button" aria-label="VIA ${esc(tr.number)}, ${esc(tr.from)} to ${esc(tr.to)}, ${st.text}" style="--c:var(${STATUS_VAR[st.cls]})">
+        <div class="band"></div>
+        <div class="a">
+          <div class="idrow">${viaLogo()}
+            <div class="id"><div class="cs">VIA ${esc(tr.number)}</div><div class="sub">VIA Rail</div></div>
+          </div>
+          <div class="route"><b>${esc(tr.from)}</b> <span class="to">→</span> <b>${esc(tr.to)}</b></div>
+          <div class="prog">${pct != null ? `<div class="bar"><span style="width:${(pct * 100).toFixed(1)}%"></span></div>` : ""}
+            <div class="ptext">${nextTxt}${tr.dest ? `Arrives ${esc(tr.dest.name)} ${stationTime(tr.dest.est || tr.dest.sched, tr.dest.tz)}` : ""}</div></div>
+        </div>
+        <div class="b">
+          <div><span class="pill ${st.cls}">${st.text}</span></div>
+          <div>${tr.speed != null ? fmt(tr.speed) + " km/h" : "—"}</div>
+          <div class="dist"><span class="arrow" style="transform:rotate(${tr.brg}deg)">↑</span> ${fmt(tr.dist, tr.dist < 100 ? 1 : 0)} km</div>
+        </div>
+      </li>`;
+    }).join("");
+  }
+  syncTrainMarkers();
+  if (state.selected) renderTrainDetail();
+}
+
+function renderTrainDetail() {
+  const tr = state.trains.get(state.selected);
+  const v = $("detailView");
+  if (!tr) { closeDetail(); return; }
+  const st = trainStatus(tr);
+  const left = tr.stops.length - tr.passedCount;
+  const pct = trainProgress(tr);
+  const ageMin = tr.poll ? Math.max(0, Math.round((Date.now() - tr.poll) / 60000)) : null;
+  const dest = tr.dest;
+  const stopsHtml = tr.stops.map((x) => {
+    const cls = x.passed ? "done" : x === tr.next ? "next" : "";
+    const same = !x.est || !x.sched || Math.abs(minsBetween(x.sched, x.est)) < 1;
+    return `<li class="${cls}"><i></i><span>${esc(x.name)}</span>
+      <time class="sch${same ? " same" : ""}" title="Scheduled">${same ? "" : stationTime(x.sched, x.tz)}</time>
+      <time title="${x.passed ? "Actual / last estimate" : "Estimated"}">${stationTime(x.est || x.sched, x.tz)}</time></li>`;
+  }).join("");
+
+  v.innerHTML = `
+    <button class="btn back" type="button" id="backBtn">← All trains</button>
+    <div class="dhead">
+      ${viaLogo(true)}
+      <div class="dtitle"><div class="cs">VIA ${esc(tr.number)}</div><div class="op">VIA Rail${tr.serviceDate ? ` · started ${esc(new Date(tr.serviceDate + "T12:00:00").toLocaleDateString([], { month: "short", day: "numeric" }))}` : ""}</div></div>
+      <span class="pill ${st.cls}" style="font-size:14px;line-height:26px;padding:0 10px">${st.text}</span>
+    </div>
+    <div class="legs">
+      <div class="pair">
+        <div class="leg from"><code>${esc(tr.from)}</code></div><div class="mid">→</div><div class="leg to"><code>${esc(tr.to)}</code></div>
+      </div>
+      ${pct != null ? `<div class="bar"><span style="width:${(pct * 100).toFixed(1)}%"></span></div>` : ""}
+      <div class="note">${left === 1 ? "Final stop next" : `${left} stops to go`}</div>
+    </div>
+    <div class="status">
+      <div><small>Next stop</small><b>${tr.next ? esc(tr.next.name) : "—"}</b>${tr.next ? `<em>${stationTime(tr.next.est || tr.next.sched, tr.next.tz)}</em>` : ""}</div>
+      <div><small>Arrives ${dest ? esc(dest.name) : ""}</small><b>${dest ? stationTime(dest.est || dest.sched, dest.tz) : "—"}</b>${dest && dest.sched ? `<em>Scheduled ${stationTime(dest.sched, dest.tz)}</em>` : ""}</div>
+      <div><small>Status</small><b>${st.text}</b>${tr.delay != null ? `<em>at next stop</em>` : ""}</div>
+    </div>
+    <p class="fine">Times are VIA Rail's own estimates, shown in each station's local time. VIA notes its tracking relies on cellular signal, so estimates can lag.</p>
+    <ol class="stops">${stopsHtml}</ol>
+    <dl class="facts">
+      <div><dt>Speed</dt><dd>${tr.speed != null ? fmt(tr.speed) + " km/h" : "—"}</dd></div>
+      <div><dt>Heading</dt><dd>${tr.heading != null ? fmt(tr.heading) + "° <small>" + compass(tr.heading) + "</small>" : "—"}</dd></div>
+      <div><dt>From you</dt><dd>${fmt(tr.dist, tr.dist < 100 ? 1 : 0)} km <small>${compass(tr.brg)}</small></dd></div>
+      <div><dt>Position updated</dt><dd>${ageMin == null ? "—" : ageMin < 1 ? "Just now" : ageMin + " min ago"}</dd></div>
+    </dl>
+    <div class="links"><a href="https://tsimobile.viarail.ca/" target="_blank" rel="noopener">VIA Rail train tracker</a></div>`;
+  $("backBtn").addEventListener("click", closeDetail);
+}
+
+function selectTrain(id) {
+  state.selected = id;
+  $("listView").hidden = true;
+  $("detailView").hidden = false;
+  render();
+  const tr = state.trains.get(id);
+  if (tr) map.panTo([tr.lat, tr.lon]);
+}
+
+// ---------- Mode switch ----------
+function applyModeUI() {
+  const trains = state.mode === "trains";
+  $("modeFlights").setAttribute("aria-pressed", String(!trains));
+  $("modeTrains").setAttribute("aria-pressed", String(trains));
+  document.querySelector(".brand h1").textContent = trains ? "Train Tracker" : "Flight Tracker";
+  document.title = trains ? "Train Tracker" : "Flight Tracker";
+  $("legend").hidden = trains;
+  $("groundWrap").hidden = trains;
+  $("allTrainsWrap").hidden = !trains;
+  $("footFlights").hidden = trains;
+  $("footTrains").hidden = !trains;
+  $("sCountL").textContent = trains ? "Within radius" : "In the air";
+  $("sHighL").textContent = trains ? "Running late" : "Highest";
+  $("map").setAttribute("aria-label", trains ? "Map of trains near you" : "Map of aircraft near you");
+}
+function setMode(mode) {
+  if (mode === state.mode) return;
+  state.mode = mode;
+  try { localStorage.setItem("mode", mode); } catch (e) { /* storage unavailable */ }
+  state.selected = null;
+  state.fetchedAt = 0;
+  if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+  for (const m of markers.values()) map.removeLayer(m); markers.clear();
+  for (const m of trainMarkers.values()) map.removeLayer(m); trainMarkers.clear();
+  $("detailView").hidden = true; $("listView").hidden = false;
+  hideBannerIf("net"); hideBannerIf("demo");
+  $("strips").innerHTML = "";
+  applyModeUI();
+  render();
+  fitRadius();
+  refresh();
+}
+$("modeFlights").addEventListener("click", () => setMode("flights"));
+$("modeTrains").addEventListener("click", () => setMode("trains"));
+$("showAllTrains").addEventListener("change", (e) => {
+  state.showAllTrains = e.target.checked;
+  render();
+  if (state.showAllTrains) fitTrains(); else fitRadius();
+});
+
 // ---------- Boot ----------
 if (new URLSearchParams(location.search).has("demo")) state.demo = true;
+applyModeUI();
 render();
 startGeo();
 if (state.demo) setTimeout(() => setDemo(true), 0);

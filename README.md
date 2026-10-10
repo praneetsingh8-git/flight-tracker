@@ -1,6 +1,7 @@
 # Flight Tracker (draft)
 
-Single-page web app that shows live aircraft around your current location.
+Single-page web app that shows live aircraft, and VIA Rail trains, around your current location.
+A **Flights | Trains** toggle switches between them (remembered per browser).
 
 - Uses the browser's location (GPS/Wi-Fi), or tap **Pick on map** to set a position.
 - Live positions from [adsb.lol](https://adsb.lol) (free, no key, ODbL); falls back to [airplanes.live](https://airplanes.live).
@@ -12,6 +13,15 @@ Single-page web app that shows live aircraft around your current location.
 - Shows callsign, airline, route, altitude, vertical rate, ground speed, heading, distance and direction from you, elevation angle, aircraft type, registration, squawk (flags 7500/7600/7700).
 - Refreshes every 15 s, pauses when the tab is hidden, and moves planes smoothly between refreshes.
 - `?demo` in the URL shows made-up aircraft around you (clearly labelled).
+
+## Trains
+
+- **VIA Rail:** positions, speed, next stop, and VIA's own scheduled vs estimated times (on time / late / early)
+  from the public tracker feed behind tsimobile.viarail.ca, proxied at `/api/via/*`. It's unofficial and can
+  change or disappear without notice.
+- **GO Transit:** not yet. Live GO data only comes from the Metrolinx Open Data API, which needs a free key
+  (manual approval). Register at https://api.openmetrolinx.com/OpenDataAPI/Help/Registration/en.
+- TTC subway: no live positions are published.
 
 ## Run it
 
@@ -27,7 +37,7 @@ python3 -m http.server 8000
 ### Hosting: use Netlify, not GitHub Pages
 
 The flight-data APIs block direct calls from a browser on another site (CORS), which is what
-GitHub Pages does. `netlify.toml` adds same-origin rewrites (`/api/adsblol/*`, `/api/adsbim/*`, `/api/airplaneslive/*`)
+GitHub Pages does. `netlify.toml` adds same-origin rewrites (`/api/adsblol/*`, `/api/adsbim/*`, `/api/airplaneslive/*`, `/api/via/*`)
 so the browser only ever talks to the site itself. On Netlify: import this repo, no build command,
 publish directory `.`.
 
