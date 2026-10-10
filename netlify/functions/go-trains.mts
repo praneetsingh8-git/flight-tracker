@@ -1,4 +1,5 @@
-import type { Config } from "@netlify/functions"
+// No npm dependencies on purpose: the repo has no package.json, so nothing to install at build time.
+declare const Netlify: { env: { get(name: string): string | undefined } }
 
 // Live GO Transit trains from the Metrolinx Open Data API.
 // The key stays on the server: set METROLINX_KEY in Netlify (scope: Functions).
@@ -10,7 +11,9 @@ const STOPS_TTL_MS = 24 * 3600_000    // station names barely change
 let trainsCache: { at: number; body: unknown } | null = null
 let stopsCache: { at: number; names: Record<string, string> } | null = null
 
-const asArray = <T>(v: T | T[] | undefined | null): T[] => (Array.isArray(v) ? v : v ? [v] : [])
+function asArray<T>(v: T | T[] | undefined | null): T[] {
+  return Array.isArray(v) ? v : v ? [v] : []
+}
 
 async function getJSON(path: string, key: string) {
   const res = await fetch(`${BASE}/${path}?key=${encodeURIComponent(key)}`, {
@@ -79,4 +82,4 @@ export default async () => {
   }
 }
 
-export const config: Config = { path: "/api/go/trains" }
+export const config = { path: "/api/go/trains" }
