@@ -188,6 +188,8 @@ label.inline { display: inline-flex; align-items: center; gap: 6px; font-size: 1
 .logo.none { background: var(--surface); }
 .logo.none svg { width: 20px; height: 20px; fill: var(--muted); }
 .logo.lg { width: 56px; height: 56px; border-radius: 12px; }
+.logo.go { background: #00853f; border-color: #00853f; }
+.logo.go b { color: #fff; }
 .logo.lg b { font-size: 16px; }
 .toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; text-transform: none; letter-spacing: 0; font-size: 12px; }
 .b .alt { font-weight: 600; font-size: 15px; }
@@ -322,7 +324,7 @@ dl.facts dd small { font-weight: 400; color: var(--muted); }
         <div><b id="sNear">–</b><small>Nearest</small></div>
         <div><b id="sHigh">–</b><small id="sHighL">Highest</small></div>
       </div>
-      <div class="listhead"><label class="toggle" for="showGround" id="groundWrap"><input type="checkbox" id="showGround"> <span id="groundLbl">Show ground traffic</span></label><label class="toggle" for="showAllTrains" id="allTrainsWrap" hidden><input type="checkbox" id="showAllTrains"> <span id="allTrainsLbl">Show all VIA trains</span></label><span id="updated">Not updated yet</span></div>
+      <div class="listhead"><label class="toggle" for="showGround" id="groundWrap"><input type="checkbox" id="showGround"> <span id="groundLbl">Show ground traffic</span></label><label class="toggle" for="showAllTrains" id="allTrainsWrap" hidden><input type="checkbox" id="showAllTrains"> <span id="allTrainsLbl">Show all running trains</span></label><span id="updated">Not updated yet</span></div>
       <ul class="strips" id="strips"></ul>
     </section>
 
@@ -341,6 +343,9 @@ const REFRESH_MS = 15000;
 const TRAIN_REFRESH_MS = 30000;
 // VIA Rail's public tracker feed (unofficial). Same-origin rewrite first, direct as fallback.
 const VIA_URLS = ["/api/via/data/allData.json", "https://tsimobile.viarail.ca/data/allData.json"];
+// GO Transit via our Netlify Function (netlify/functions/go-trains.mts), which holds the Metrolinx key.
+const GO_URL = "/api/go/trains";
+const GO_LINES = { LW: "Lakeshore West", LE: "Lakeshore East", ST: "Stouffville", BR: "Barrie", RH: "Richmond Hill", KI: "Kitchener", MI: "Milton" };
 const KM_PER_NM = 1.852;
 // The /api/* paths are same-origin rewrites to the real services (see netlify.toml), which
 // avoids the browser's cross-origin (CORS) block. Direct URLs are a fallback for hosts without them.
@@ -406,7 +411,8 @@ const state = {
   showGround: false,  // ground traffic (taxiing planes, airport vehicles) hidden by default
   mode: "flights",    // "flights" | "trains"
   trains: new Map(),  // id -> train
-  trainsRunning: 0,   // VIA trains with a position anywhere in Canada
+  trainsRunning: 0,   // trains with a position, any distance
+  goStatus: "unknown", // "unknown" | "off" (no key yet) | "ok" | "error"
   showAllTrains: false,
 };
 try { if (localStorage.getItem("mode") === "trains") state.mode = "trains"; } catch (e) { /* storage unavailable */ }
@@ -1150,7 +1156,7 @@ function parseViaTrain(key, t) {
   const next = stops.find((x) => !x.passed) || stops[stops.length - 1] || null;
   const dest = stops[stops.length - 1] || null;
   return {
-    id: String(key), number: String(key).split(" ")[0],
+    id: "via-" + key, op: "VIA", number: String(key).split(" ")[0], line: null,
     from: titleCase(t.from), to: titleCase(t.to),
     lat: t.lat, lon: t.lng, speed: typeof t.speed === "number" ? t.speed : null,
     heading: typeof t.direction === "number" ? t.direction : null,
@@ -1161,6 +1167,35 @@ function parseViaTrain(key, t) {
     passedCount: stops.filter((x) => x.passed).length,
   };
 }
+// One GO trip from our function -> the same train shape VIA uses. GO gives delay in seconds and the
+// next/last station, but not per-stop times, so stops stay empty.
+function parseGoTrain(t) {
+  if (!t || typeof t.lat !== "number" || typeof t.lon !== "number") return null;
+  const lineName = GO_LINES[t.line] || t.line || null;
+  const to = t.last || (t.display ? String(t.display).replace(/^[A-Z]{2}\s*-\s*/, "") : null);
+  const nextName = t.at || t.next;
+  return {
+    id: "go-" + t.trip, op: "GO", number: t.trip, line: lineName,
+    from: t.first || "", to: to || "",
+    lat: t.lat, lon: t.lon, speed: null, heading: t.course,
+    poll: t.modified ? Date.parse(t.modified.replace(" ", "T")) || null : null,
+    serviceDate: null, stops: [],
+    next: nextName ? { name: nextName, atStation: !!t.at } : null, dest: null,
+    delay: t.delaySec == null ? null : Math.round(t.delaySec / 60),
+    passedCount: 0, cars: t.cars, occupancy: t.occupancy, moving: t.moving,
+  };
+}
+async function loadGo() {
+  const r = await fetch(GO_URL, { signal: AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined });
+  const ct = r.headers.get("content-type") || "";
+  if (!ct.includes("json")) { state.goStatus = "off"; return []; } // function not deployed (e.g. local preview)
+  const j = await r.json();
+  if (!j.configured) { state.goStatus = "off"; return []; }
+  if (!r.ok || j.error) { state.goStatus = "error"; console.warn("GO trains:", j.error); return []; }
+  state.goStatus = "ok";
+  return (j.trains || []).map(parseGoTrain).filter(Boolean);
+}
+
 // Lateness at the next stop -> label + colour class
 function trainStatus(tr) {
   const d = tr.delay;
@@ -1177,17 +1212,21 @@ function stationTime(iso, tz) {
   catch (e) { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
 }
 
-async function loadTrains() {
+async function loadVia() {
   let data = null, lastErr = null;
   for (const url of VIA_URLS) {
     try { data = await fetchJSON(url, {}, 15000); if (data && typeof data === "object" && !Array.isArray(data)) break; data = null; }
     catch (e) { lastErr = e; }
   }
   if (!data) throw lastErr || new Error("unexpected response");
+  return Object.entries(data).map(([key, t]) => parseViaTrain(key, t)).filter(Boolean);
+}
+async function loadTrains() {
+  const [via, go] = await Promise.allSettled([loadVia(), loadGo()]);
+  if (go.status === "rejected") { state.goStatus = "error"; console.warn("GO trains:", go.reason); }
+  if (via.status === "rejected" && !(go.status === "fulfilled" && go.value.length)) throw via.reason;
   const next = new Map();
-  for (const [key, t] of Object.entries(data)) {
-    const tr = parseViaTrain(key, t);
-    if (!tr) continue;
+  for (const tr of [...(via.status === "fulfilled" ? via.value : []), ...(go.status === "fulfilled" ? go.value : [])]) {
     tr.dist = haversineKm(state.me, tr);
     tr.brg = bearingDeg(state.me, tr);
     next.set(tr.id, tr);
@@ -1196,6 +1235,7 @@ async function loadTrains() {
   state.trainsRunning = next.size;
   state.fetchedAt = Date.now();
   state.source = "VIA Rail";
+  updateTrainFoot(via.status === "fulfilled");
   if (state.selected && !next.has(state.selected)) state.selected = null;
   hideBannerIf("net");
   render();
@@ -1217,13 +1257,13 @@ function syncTrainMarkers() {
     });
     let m = trainMarkers.get(tr.id);
     if (!m) {
-      m = L.marker([tr.lat, tr.lon], { icon, title: `VIA ${tr.number}` })
+      m = L.marker([tr.lat, tr.lon], { icon, title: trainLabel(tr) })
         .bindTooltip("", { className: "ac-tip", direction: "right", offset: [14, 0] })
         .on("click", () => select(tr.id))
         .addTo(map);
       trainMarkers.set(tr.id, m);
     } else { m.setLatLng([tr.lat, tr.lon]); m.setIcon(icon); }
-    m.setTooltipContent(`VIA ${esc(tr.number)} · ${esc(tr.from)} → ${esc(tr.to)} · ${st.text}`);
+    m.setTooltipContent(`${esc(trainLabel(tr))} · ${esc(tr.from)} → ${esc(tr.to)} · ${st.text}`);
     m.setZIndexOffset(tr.id === state.selected ? 900 : 0);
   }
 }
@@ -1241,8 +1281,20 @@ function trainProgress(tr) {
   if (!t0 || !t1 || t1 <= t0 || first === last) return null;
   return Math.max(0, Math.min(1, (Date.now() - t0) / (t1 - t0)));
 }
-function viaLogo(big) {
+const trainLabel = (tr) => `${tr.op} ${tr.number}`;
+const trainSub = (tr) => (tr.op === "GO" ? `GO Transit${tr.line ? " · " + tr.line : ""}` : "VIA Rail");
+function trainLogo(tr, big) {
+  if (tr.op === "GO") return `<span class="logo go${big ? " lg" : ""}" aria-hidden="true"><b>GO</b></span>`;
   return `<span class="logo${big ? " lg" : ""}" aria-hidden="true"><b>VIA</b><img src="${LOGO_URL("2R")}" alt="" loading="lazy" onerror="this.remove()"></span>`;
+}
+function updateTrainFoot(viaOk) {
+  const go = {
+    ok: "GO Transit live data from Metrolinx Open Data.",
+    off: "GO Transit trains will appear once the Metrolinx data key is set up.",
+    error: "GO Transit data is unavailable right now.",
+    unknown: "",
+  }[state.goStatus];
+  $("footTrains").innerHTML = `VIA Rail data from VIA's public tracker (<a href="https://tsimobile.viarail.ca" target="_blank" rel="noopener">tsimobile.viarail.ca</a>), an unofficial feed that can change without notice${viaOk ? "" : " (not answering right now)"}. ${go}`;
 }
 
 function renderTrains() {
@@ -1253,24 +1305,26 @@ function renderTrains() {
   $("sNear").textContent = all.length ? fmt(all[0].dist, all[0].dist < 100 ? 1 : 0) + " km" : "–";
   $("sHigh").textContent = list.filter((t) => ["late", "bad"].includes(trainStatus(t).cls)).length;
   $("updated").textContent = state.fetchedAt ? "Updated " + new Date(state.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "Not updated yet";
-  $("allTrainsLbl").textContent = `Show all running VIA trains (${state.trainsRunning})`;
+  $("allTrainsLbl").textContent = `Show all running trains (${state.trainsRunning})`;
 
   const ul = $("strips");
   if (!list.length) {
     ul.innerHTML = state.fetchedAt
-      ? `<li class="empty">No VIA trains within ${state.radiusKm} km right now.${state.trainsRunning ? ` ${state.trainsRunning} are running elsewhere in Canada. Tick “Show all running VIA trains” to see them.` : " No VIA trains are reporting a position at the moment."}</li>`
+      ? `<li class="empty">No VIA trains within ${state.radiusKm} km right now.${state.trainsRunning ? ` ${state.trainsRunning} are running elsewhere. Tick “Show all running trains” to see them.` : " No trains are reporting a position at the moment."}</li>`
       : `<li class="empty">Looking for trains near you…</li>`;
   } else {
     ul.innerHTML = list.map((tr) => {
       const st = trainStatus(tr);
       const toDest = tr.next && tr.next === tr.dest;
-      const nextTxt = tr.next && !toDest ? `Next: ${esc(tr.next.name)} ${stationTime(tr.next.est || tr.next.sched, tr.next.tz)} · ` : "";
+      const nextTxt = !tr.next || toDest ? ""
+        : tr.op === "GO" ? `${tr.next.atStation ? "At" : "Next:"} ${esc(tr.next.name)}`
+        : `Next: ${esc(tr.next.name)} ${stationTime(tr.next.est || tr.next.sched, tr.next.tz)} · `;
       const pct = trainProgress(tr);
-      return `<li class="strip${tr.id === state.selected ? " sel" : ""}" data-hex="${esc(tr.id)}" tabindex="0" role="button" aria-label="VIA ${esc(tr.number)}, ${esc(tr.from)} to ${esc(tr.to)}, ${st.text}" style="--c:var(${STATUS_VAR[st.cls]})">
+      return `<li class="strip${tr.id === state.selected ? " sel" : ""}" data-hex="${esc(tr.id)}" tabindex="0" role="button" aria-label="${esc(trainLabel(tr))}, ${esc(tr.from)} to ${esc(tr.to)}, ${st.text}" style="--c:var(${STATUS_VAR[st.cls]})">
         <div class="band"></div>
         <div class="a">
-          <div class="idrow">${viaLogo()}
-            <div class="id"><div class="cs">VIA ${esc(tr.number)}</div><div class="sub">VIA Rail</div></div>
+          <div class="idrow">${trainLogo(tr)}
+            <div class="id"><div class="cs">${esc(trainLabel(tr))}</div><div class="sub">${esc(trainSub(tr))}</div></div>
           </div>
           <div class="route"><b>${esc(tr.from)}</b> <span class="to">→</span> <b>${esc(tr.to)}</b></div>
           <div class="prog">${pct != null ? `<div class="bar"><span style="width:${(pct * 100).toFixed(1)}%"></span></div>` : ""}
@@ -1278,7 +1332,7 @@ function renderTrains() {
         </div>
         <div class="b">
           <div><span class="pill ${st.cls}">${st.text}</span></div>
-          <div>${tr.speed != null ? fmt(tr.speed) + " km/h" : "—"}</div>
+          <div>${tr.speed != null ? fmt(tr.speed) + " km/h" : tr.op === "GO" ? (tr.moving ? "Moving" : "Stopped") : "—"}</div>
           <div class="dist"><span class="arrow" style="transform:rotate(${tr.brg}deg)">↑</span> ${fmt(tr.dist, tr.dist < 100 ? 1 : 0)} km</div>
         </div>
       </li>`;
@@ -1308,8 +1362,8 @@ function renderTrainDetail() {
   v.innerHTML = `
     <button class="btn back" type="button" id="backBtn">← All trains</button>
     <div class="dhead">
-      ${viaLogo(true)}
-      <div class="dtitle"><div class="cs">VIA ${esc(tr.number)}</div><div class="op">VIA Rail${tr.serviceDate ? ` · started ${esc(new Date(tr.serviceDate + "T12:00:00").toLocaleDateString([], { month: "short", day: "numeric" }))}` : ""}</div></div>
+      ${trainLogo(tr, true)}
+      <div class="dtitle"><div class="cs">${esc(trainLabel(tr))}</div><div class="op">${esc(trainSub(tr))}${tr.serviceDate ? ` · started ${esc(new Date(tr.serviceDate + "T12:00:00").toLocaleDateString([], { month: "short", day: "numeric" }))}` : ""}</div></div>
       <span class="pill ${st.cls}" style="font-size:14px;line-height:26px;padding:0 10px">${st.text}</span>
     </div>
     <div class="legs">
@@ -1317,22 +1371,27 @@ function renderTrainDetail() {
         <div class="leg from"><code>${esc(tr.from)}</code></div><div class="mid">→</div><div class="leg to"><code>${esc(tr.to)}</code></div>
       </div>
       ${pct != null ? `<div class="bar"><span style="width:${(pct * 100).toFixed(1)}%"></span></div>` : ""}
-      <div class="note">${left === 1 ? "Final stop next" : `${left} stops to go`}</div>
+      ${tr.stops.length ? `<div class="note">${left === 1 ? "Final stop next" : `${left} stops to go`}</div>` : ""}
     </div>
     <div class="status">
-      <div><small>Next stop</small><b>${tr.next ? esc(tr.next.name) : "—"}</b>${tr.next ? `<em>${stationTime(tr.next.est || tr.next.sched, tr.next.tz)}</em>` : ""}</div>
-      <div><small>Arrives ${dest ? esc(dest.name) : ""}</small><b>${dest ? stationTime(dest.est || dest.sched, dest.tz) : "—"}</b>${dest && dest.sched ? `<em>Scheduled ${stationTime(dest.sched, dest.tz)}</em>` : ""}</div>
+      <div><small>${tr.next && tr.next.atStation ? "At station" : "Next stop"}</small><b>${tr.next ? esc(tr.next.name) : "—"}</b>${tr.next && tr.next.sched ? `<em>${stationTime(tr.next.est || tr.next.sched, tr.next.tz)}</em>` : ""}</div>
+      ${dest ? `<div><small>Arrives ${esc(dest.name)}</small><b>${stationTime(dest.est || dest.sched, dest.tz)}</b>${dest.sched ? `<em>Scheduled ${stationTime(dest.sched, dest.tz)}</em>` : ""}</div>`
+        : `<div><small>Heading to</small><b>${esc(tr.to || "—")}</b></div>`}
       <div><small>Status</small><b>${st.text}</b>${tr.delay != null ? `<em>at next stop</em>` : ""}</div>
     </div>
-    <p class="fine">Times are VIA Rail's own estimates, shown in each station's local time. VIA notes its tracking relies on cellular signal, so estimates can lag.</p>
-    <ol class="stops">${stopsHtml}</ol>
+    <p class="fine">${tr.op === "GO" ? "Delay is GO Transit's own figure from Metrolinx's live data." : "Times are VIA Rail's own estimates, shown in each station's local time. VIA notes its tracking relies on cellular signal, so estimates can lag."}</p>
+    ${tr.stops.length ? `<ol class="stops">${stopsHtml}</ol>` : ""}
     <dl class="facts">
-      <div><dt>Speed</dt><dd>${tr.speed != null ? fmt(tr.speed) + " km/h" : "—"}</dd></div>
+      <div><dt>${tr.op === "GO" ? "Moving" : "Speed"}</dt><dd>${tr.op === "GO" ? (tr.moving ? "Yes" : "Stopped") : tr.speed != null ? fmt(tr.speed) + " km/h" : "—"}</dd></div>
       <div><dt>Heading</dt><dd>${tr.heading != null ? fmt(tr.heading) + "° <small>" + compass(tr.heading) + "</small>" : "—"}</dd></div>
       <div><dt>From you</dt><dd>${fmt(tr.dist, tr.dist < 100 ? 1 : 0)} km <small>${compass(tr.brg)}</small></dd></div>
       <div><dt>Position updated</dt><dd>${ageMin == null ? "—" : ageMin < 1 ? "Just now" : ageMin + " min ago"}</dd></div>
+      ${tr.op === "GO" ? `<div><dt>Cars</dt><dd>${esc(tr.cars || "—")}</dd></div>
+      <div><dt>Occupancy</dt><dd>${tr.occupancy != null ? tr.occupancy + "%" : "—"}</dd></div>` : ""}
     </dl>
-    <div class="links"><a href="https://tsimobile.viarail.ca/" target="_blank" rel="noopener">VIA Rail train tracker</a></div>`;
+    <div class="links">${tr.op === "GO"
+      ? `<a href="https://www.gotransit.com/" target="_blank" rel="noopener">GO Transit</a>`
+      : `<a href="https://tsimobile.viarail.ca/" target="_blank" rel="noopener">VIA Rail train tracker</a>`}</div>`;
   $("backBtn").addEventListener("click", closeDetail);
 }
 
