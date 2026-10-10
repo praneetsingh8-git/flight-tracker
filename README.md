@@ -12,6 +12,7 @@ A **Flights | Trains** toggle switches between them (remembered per browser).
 - Ground traffic (taxiing aircraft, airport vehicles) is hidden by default.
 - Shows callsign, airline, route, altitude, vertical rate, ground speed, heading, distance and direction from you, elevation angle, aircraft type, registration, squawk (flags 7500/7600/7700).
 - Refreshes every 15 s, pauses when the tab is hidden, and moves planes smoothly between refreshes.
+- **Map | Radar** switch (flights): a green-phosphor radar scope centred on you, north up, range = the radius control. The 12-second sweep is cosmetic; targets glow as the beam passes and fade like a CRT. Tap a target for details. Emergency squawks show red.
 - `?demo` in the URL shows made-up aircraft around you (clearly labelled).
 
 ## Trains

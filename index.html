@@ -127,7 +127,7 @@ label.inline { display: inline-flex; align-items: center; gap: 6px; font-size: 1
 /* Main */
 .main { display: grid; grid-template-columns: 1fr minmax(320px, 400px); min-height: 0; }
 .mapwrap { position: relative; min-height: 0; }
-#map { position: absolute; inset: 0; background: var(--surface-2); }
+#map { position: absolute; inset: 0; z-index: 0; background: var(--surface-2); } /* own stacking context so the radar canvas can sit above Leaflet's panes */
 .side { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border-left: 1px solid var(--line); }
 
 .banner {
@@ -249,6 +249,9 @@ dl.facts dd small { font-weight: 400; color: var(--muted); }
 .ac-icon path { fill: var(--c); stroke: var(--surface); stroke-width: 1; }
 .ac-icon.sel path { fill: var(--sel); stroke: var(--fg); }
 .me-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 3px solid #fff; box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 25%, transparent); }
+/* Radar view: a green-phosphor PPI scope drawn on canvas. Deliberately one look in both themes. */
+#radar { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; display: block; background: #020a05; cursor: pointer; touch-action: manipulation; }
+.viewseg { position: absolute; top: 10px; right: 10px; z-index: 700; box-shadow: var(--shadow); background: var(--surface); }
 .legend {
   position: absolute; left: 10px; bottom: 24px; z-index: 500; padding: 8px 10px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow);
@@ -267,6 +270,7 @@ dl.facts dd small { font-weight: 400; color: var(--muted); }
 
 @media (max-width: 760px) {
   .main { grid-template-columns: 1fr; grid-template-rows: 42% 1fr; }
+  .main.radar-on { grid-template-rows: 58% 1fr; }
   .side { border-left: 0; border-top: 1px solid var(--line); }
   .brand span, label.inline .lbl { display: none; }
   .top { padding-block: 8px; }
@@ -305,6 +309,11 @@ dl.facts dd small { font-weight: 400; color: var(--muted); }
 <main class="main">
   <div class="mapwrap">
     <div id="map" aria-label="Map of aircraft near you"></div>
+    <canvas id="radar" hidden aria-label="Radar scope of aircraft near you. Tap a target for details."></canvas>
+    <div class="seg viewseg" id="viewSeg" role="group" aria-label="View">
+      <button type="button" id="viewMap" aria-pressed="true">Map</button>
+      <button type="button" id="viewRadar" aria-pressed="false">Radar</button>
+    </div>
     <div class="pickhint" id="pickHint" hidden>Tap the map to set your position</div>
     <div class="legend" id="legend" aria-label="Altitude colours">
       <div><i style="background:var(--alt-4)"></i>&gt; 30,000 ft</div>
@@ -634,6 +643,7 @@ $("pickBtn").addEventListener("click", () => {
     startGeo();
     return;
   }
+  if (!state.picking && radarOn()) setView("map"); // picking a position needs the map
   setPicking(!state.picking);
 });
 map.on("click", (e) => {
@@ -1404,6 +1414,168 @@ function selectTrain(id) {
   if (tr) map.panTo([tr.lat, tr.lon]);
 }
 
+// ---------- Radar view (phosphor PPI) ----------
+// North-up scope centred on you; range = the radius control. Positions are the same live data as the
+// map (coasting between refreshes); the sweep is cosmetic. Targets glow as the beam passes and fade
+// over one turn, like phosphor on a cathode-ray tube.
+const SWEEP_MS = 12000;
+const radar = { canvas: $("radar"), ctx: $("radar").getContext("2d"), w: 0, h: 0, raf: 0, hits: [], t0: performance.now() };
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+state.view = "map";
+try { if (localStorage.getItem("view") === "radar") state.view = "radar"; } catch (e) { /* storage unavailable */ }
+const radarOn = () => state.view === "radar" && state.mode === "flights";
+
+function radarFit() {
+  const r = radar.canvas.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
+  radar.w = r.width; radar.h = r.height;
+  radar.canvas.width = Math.round(r.width * dpr); radar.canvas.height = Math.round(r.height * dpr);
+  radar.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+new ResizeObserver(() => { if (radarOn()) radarFit(); }).observe($("radar").parentElement);
+
+// km east/north of you (flat projection; fine within a few hundred km)
+function localKm(p) {
+  return { x: (p.lon - state.me.lon) * 111.32 * Math.cos(rad(state.me.lat)), y: (p.lat - state.me.lat) * 110.57 };
+}
+function drawRadar(now) {
+  const { ctx, w, h } = radar;
+  if (!w || !h) return;
+  const TAU = Math.PI * 2;
+  const sweep = reduceMotion ? 0.9 : ((now - radar.t0) % SWEEP_MS) / SWEEP_MS * TAU; // clockwise from north
+  const cx = w / 2, cy = h / 2, R = Math.max(40, Math.min(w, h) / 2 - 14), range = state.radiusKm, k = R / range;
+  const G = (a) => `rgba(110,255,150,${a})`;
+
+  ctx.fillStyle = "#020a05"; ctx.fillRect(0, 0, w, h);
+  const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+  glow.addColorStop(0, "#07240f"); glow.addColorStop(1, "#020a05");
+  ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.fill();
+
+  // rings at quarter range, spokes every 30°
+  // rings at a round km step (e.g. every 10 km at 50 km range), plus the outer edge
+  const step = [1, 2, 2.5, 5, 10, 20, 25, 50, 100].find((n) => range / n <= 5) || 100;
+  const ringKm = [];
+  for (let d = step; d < range - 1e-6; d += step) ringKm.push(d);
+  ctx.lineWidth = 1; ctx.strokeStyle = G(0.18);
+  for (const d of [...ringKm, range]) { ctx.beginPath(); ctx.arc(cx, cy, d * k, 0, TAU); ctx.stroke(); }
+  ctx.strokeStyle = G(0.1); ctx.beginPath();
+  for (let d = 0; d < 360; d += 30) { const a = rad(d) - Math.PI / 2; ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); }
+  ctx.stroke();
+  const small = Math.max(10, Math.min(13, R / 18));
+  ctx.font = `${small}px "JetBrains Mono", ui-monospace, monospace`; ctx.fillStyle = G(0.5);
+  for (const d of ringKm) ctx.fillText(`${fmt(d, step % 1 ? 1 : 0)} km`, cx + 4, cy - d * k - 4);
+  ctx.textAlign = "center"; ctx.fillText("N", cx, cy - R + small + 2); ctx.textAlign = "left";
+
+  // beam with afterglow wedge (trails behind, i.e. anticlockwise)
+  if (!reduceMotion) {
+    const a = sweep - Math.PI / 2, spread = 1.6, steps = 48;
+    for (let i = 0; i < steps; i++) {
+      const a1 = a - (i / steps) * spread, a0 = a - ((i + 1) / steps) * spread;
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, a0, a1); ctx.closePath();
+      ctx.fillStyle = G(0.26 * (1 - i / steps) ** 2); ctx.fill();
+    }
+    ctx.strokeStyle = G(0.95); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); ctx.stroke();
+  }
+
+  // you
+  ctx.strokeStyle = G(0.8); ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(cx - 6, cy); ctx.lineTo(cx + 6, cy); ctx.moveTo(cx, cy - 6); ctx.lineTo(cx, cy + 6); ctx.stroke();
+
+  // targets
+  radar.hits = [];
+  if (state.me) {
+    const lineH = small * 1.15;
+    ctx.font = `${small}px "JetBrains Mono", ui-monospace, monospace`;
+    const labels = [];
+    const ordered = [...state.planes.values()].sort((a, b) => (b.hex === state.selected) - (a.hex === state.selected) || a.dist - b.dist);
+    for (const p of ordered) {
+      if (!shown(p)) continue;
+      const q = localKm(p.livePos || p);
+      if (Math.hypot(q.x, q.y) > range) continue;
+      const x = cx + q.x * k, y = cy - q.y * k;
+      const brg = (Math.atan2(q.x, q.y) + TAU) % TAU;
+      const since = ((sweep - brg) % TAU + TAU) % TAU;
+      const b = reduceMotion ? 0.9 : Math.exp(-since / TAU * 1.6);
+      const sel = p.hex === state.selected, emerg = !!SQUAWK[p.squawk];
+      const rgb = emerg ? "255,90,80" : sel ? "255,200,90" : "120,255,160";
+      ctx.shadowColor = `rgba(${rgb},.9)`; ctx.shadowBlur = 10 * b;
+      ctx.fillStyle = `rgba(${rgb},${0.18 + 0.82 * b})`;
+      ctx.beginPath(); ctx.arc(x, y, isGround(p) ? 2.4 : 3.4, 0, TAU); ctx.fill();
+      ctx.shadowBlur = 0;
+      // short heading tick
+      if (p.track != null && !isGround(p)) {
+        ctx.strokeStyle = `rgba(${rgb},${0.2 + 0.6 * b})`; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.sin(rad(p.track)) * 12, y - Math.cos(rad(p.track)) * 12); ctx.stroke();
+      }
+      if (sel) { ctx.strokeStyle = `rgba(${rgb},.9)`; ctx.strokeRect(x - 8, y - 8, 16, 16); }
+      const label = flightNumber(p) || p.callsign || p.reg || p.hex.toUpperCase();
+      const vr = p.vr == null ? "" : p.vr > 300 ? "↑" : p.vr < -300 ? "↓" : "";
+      const alt = isGround(p) ? "GND" : p.alt == null ? "---" : String(Math.round(p.alt / 100)).padStart(3, "0") + vr;
+      const line2 = `${alt} ${p.gs != null ? Math.round(p.gs) : ""}`;
+      labels.push({ x, y, label, line2, color: `rgba(${rgb},${0.3 + 0.65 * b})`, w: Math.max(ctx.measureText(label).width, ctx.measureText(line2).width) });
+      radar.hits.push({ hex: p.hex, x, y });
+    }
+    // Labels: try right, then left of the target; skip one that would overlap a label already placed.
+    const placed = [];
+    const hit = (r) => placed.some((q) => r.x < q.x + q.w && r.x + r.w > q.x && r.y < q.y + q.h && r.y + r.h > q.y);
+    for (const L of labels) {
+      const hgt = lineH * 2;
+      const spots = [{ x: L.x + 8, y: L.y - small - 3 }, { x: L.x - 8 - L.w, y: L.y - small - 3 }, { x: L.x + 8, y: L.y + 4 }];
+      const spot = spots.find((sp) => sp.x >= 2 && sp.x + L.w <= w - 2 && sp.y >= 0 && sp.y + hgt <= h - 18 && !hit({ x: sp.x, y: sp.y, w: L.w, h: hgt }));
+      if (!spot) continue;
+      placed.push({ x: spot.x, y: spot.y, w: L.w, h: hgt });
+      ctx.fillStyle = L.color;
+      ctx.fillText(L.label, spot.x, spot.y + small);
+      ctx.fillText(L.line2, spot.x, spot.y + small + lineH);
+    }
+  }
+
+  // scanlines and vignette for the CRT feel
+  ctx.fillStyle = "rgba(0,0,0,.16)"; for (let yy = 0; yy < h; yy += 3) ctx.fillRect(0, yy, w, 1);
+  const v = ctx.createRadialGradient(cx, cy, Math.min(w, h) * .3, cx, cy, Math.max(w, h) * .72);
+  v.addColorStop(0, "rgba(0,0,0,0)"); v.addColorStop(1, "rgba(0,0,0,.65)");
+  ctx.fillStyle = v; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = G(0.55); ctx.font = `${Math.max(9, small - 2)}px "JetBrains Mono", ui-monospace, monospace`;
+  ctx.fillText(`RNG ${state.radiusKm} KM   ALT FL   GS KT`, 10, h - 10);
+}
+function radarLoop(now) {
+  radar.raf = 0;
+  if (!radarOn() || document.hidden) return;
+  drawRadar(now);
+  radar.raf = reduceMotion ? 0 : requestAnimationFrame(radarLoop);
+}
+function startRadar() {
+  radarFit();
+  if (!radar.raf) radar.raf = requestAnimationFrame(radarLoop);
+}
+if (reduceMotion) setInterval(() => { if (radarOn() && !document.hidden) drawRadar(performance.now()); }, 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && radarOn()) startRadar(); });
+radar.canvas.addEventListener("click", (e) => {
+  const r = radar.canvas.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  let best = null, bd = 22;
+  for (const t of radar.hits) { const d = Math.hypot(t.x - mx, t.y - my); if (d < bd) { bd = d; best = t; } }
+  if (best) select(best.hex);
+});
+
+function applyViewUI() {
+  const on = radarOn();
+  $("viewSeg").hidden = state.mode !== "flights";
+  $("viewMap").setAttribute("aria-pressed", String(!on));
+  $("viewRadar").setAttribute("aria-pressed", String(on));
+  $("radar").hidden = !on;
+  document.querySelector(".main").classList.toggle("radar-on", on);
+  $("legend").hidden = on || state.mode === "trains";
+  if (on) startRadar(); else map.invalidateSize();
+}
+function setView(view) {
+  state.view = view;
+  try { localStorage.setItem("view", view); } catch (e) { /* storage unavailable */ }
+  if (view === "radar" && state.picking) setPicking(false);
+  applyViewUI();
+}
+$("viewMap").addEventListener("click", () => setView("map"));
+$("viewRadar").addEventListener("click", () => setView("radar"));
+
 // ---------- Mode switch ----------
 function applyModeUI() {
   const trains = state.mode === "trains";
@@ -1419,6 +1591,7 @@ function applyModeUI() {
   $("sCountL").textContent = trains ? "Within radius" : "In the air";
   $("sHighL").textContent = trains ? "Running late" : "Highest";
   $("map").setAttribute("aria-label", trains ? "Map of trains near you" : "Map of aircraft near you");
+  if (typeof applyViewUI === "function") applyViewUI();
 }
 function setMode(mode) {
   if (mode === state.mode) return;
