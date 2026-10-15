@@ -248,6 +248,22 @@ dl.facts dd small { font-weight: 400; color: var(--muted); }
 .ac-icon svg { width: 28px; height: 28px; transform: rotate(var(--rot, 0deg)); transition: transform .4s; filter: drop-shadow(0 1px 1px rgba(0,0,0,.45)); }
 .ac-icon path { fill: var(--c); stroke: var(--surface); stroke-width: 1; }
 .ac-icon.sel path { fill: var(--sel); stroke: var(--fg); }
+.ac-icon.notable::before { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid var(--sel); opacity: .85; }
+.ac-icon { position: relative; }
+.tag { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 3px; font: 600 11px/18px var(--f-data); letter-spacing: .04em; vertical-align: 3px; color: #fff; }
+.tag.mil { background: #556b2f; }
+.tag.gov { background: #1f4e8c; }
+.tag.rare { background: #a86a00; }
+.why { display: flex; align-items: center; gap: 6px; margin: 10px 0 0; font-size: 14px; }
+.why .tag { margin-left: 0; vertical-align: 0; }
+.toggles { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; }
+.toast {
+  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 750; max-width: calc(100% - 32px);
+  display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 8px; cursor: pointer;
+  background: var(--surface); color: var(--fg); border: 1px solid var(--sel); box-shadow: var(--shadow); font-size: 14px;
+}
+.toast .tag { margin-left: 0; vertical-align: 0; }
+.toast span { color: var(--muted); }
 .me-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 3px solid #fff; box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 25%, transparent); }
 /* Radar view: a green-phosphor PPI scope drawn on canvas. Deliberately one look in both themes. */
 #radar { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; display: block; background: #020a05; cursor: pointer; touch-action: manipulation; }
@@ -315,6 +331,7 @@ dl.facts dd small { font-weight: 400; color: var(--muted); }
       <button type="button" id="viewRadar" aria-pressed="false">Radar</button>
     </div>
     <div class="pickhint" id="pickHint" hidden>Tap the map to set your position</div>
+    <button class="toast" id="toast" type="button" hidden></button>
     <div class="legend" id="legend" aria-label="Altitude colours">
       <div><i style="background:var(--alt-4)"></i>&gt; 30,000 ft</div>
       <div><i style="background:var(--alt-3)"></i>15–30,000</div>
@@ -333,7 +350,7 @@ dl.facts dd small { font-weight: 400; color: var(--muted); }
         <div><b id="sNear">–</b><small>Nearest</small></div>
         <div><b id="sHigh">–</b><small id="sHighL">Highest</small></div>
       </div>
-      <div class="listhead"><label class="toggle" for="showGround" id="groundWrap"><input type="checkbox" id="showGround"> <span id="groundLbl">Show ground traffic</span></label><label class="toggle" for="showAllTrains" id="allTrainsWrap" hidden><input type="checkbox" id="showAllTrains"> <span id="allTrainsLbl">Show all running trains</span></label><span id="updated">Not updated yet</span></div>
+      <div class="listhead"><span class="toggles" id="flightToggles"><label class="toggle" for="notableOnly"><input type="checkbox" id="notableOnly"> <span id="notableLbl">Notable only</span></label><label class="toggle" for="showGround" id="groundWrap"><input type="checkbox" id="showGround"> <span id="groundLbl">Show ground traffic</span></label></span><label class="toggle" for="showAllTrains" id="allTrainsWrap" hidden><input type="checkbox" id="showAllTrains"> <span id="allTrainsLbl">Show all running trains</span></label><span id="updated">Not updated yet</span></div>
       <ul class="strips" id="strips"></ul>
     </section>
 
@@ -418,6 +435,7 @@ const state = {
   picking: false,
   inflight: false,
   showGround: false,  // ground traffic (taxiing planes, airport vehicles) hidden by default
+  notableOnly: false, // list/map/radar show only military, government and rare aircraft
   mode: "flights",    // "flights" | "trains"
   trains: new Map(),  // id -> train
   trainsRunning: 0,   // trains with a position, any distance
@@ -485,6 +503,82 @@ function logoHtml(al, big) {
 const PLANE_GLYPH = '<svg viewBox="0 0 24 24"><path d="M12 1.5c.9 0 1.4.8 1.4 1.8V9l8 4.7v2.1l-8-2.4v5l2.3 1.8v1.6L12 21l-3.7.8v-1.6l2.3-1.8v-5l-8 2.4v-2.1l8-4.7V3.3c0-1 .5-1.8 1.4-1.8z"/></svg>';
 // Ground vehicles (ADS-B category C1-C3) and anything reporting "ground"
 const isGround = (p) => p.onGround || /^C[1-7]$/.test(p.cat || "");
+
+// ---------- Notable aircraft ----------
+// Rare or famous types by ICAO type designator. Common airliners stay out on purpose.
+const NOTABLE_TYPES = {
+  A124: "Antonov An-124 Ruslan, one of the largest cargo planes flying",
+  AN22: "Antonov An-22, giant Soviet-era turboprop freighter",
+  A3ST: "Airbus Beluga, oversized freighter for aircraft parts",
+  A337: "Airbus BelugaXL, oversized freighter for aircraft parts",
+  BLCF: "Boeing 747 Dreamlifter, carries 787 fuselage sections",
+  SGUP: "Aero Spacelines Super Guppy, NASA outsized cargo",
+  A388: "Airbus A380, the largest passenger jet",
+  B748: "Boeing 747-8, the last and longest 747",
+  B744: "Boeing 747-400, the classic jumbo",
+  B742: "Boeing 747-200, vintage jumbo",
+  A400: "Airbus A400M Atlas military transport",
+  C5M: "Lockheed C-5M Super Galaxy, huge military transport",
+  C17: "Boeing C-17 Globemaster III",
+  B52: "Boeing B-52 Stratofortress bomber",
+  E3TF: "Boeing E-3 Sentry (AWACS) radar plane",
+  E3CF: "Boeing E-3 Sentry (AWACS) radar plane",
+  E6: "Boeing E-6 Mercury command post",
+  U2: "Lockheed U-2 high-altitude reconnaissance",
+  K35R: "Boeing KC-135 Stratotanker",
+  KC46: "Boeing KC-46 Pegasus tanker",
+  VC25: "Boeing VC-25, the Air Force One airframe",
+  DC3: "Douglas DC-3 / C-47, vintage 1930s–40s airliner",
+  DC6: "Douglas DC-6, vintage piston airliner",
+  CONI: "Lockheed Constellation, vintage airliner",
+  L049: "Lockheed Constellation, vintage airliner",
+  B17: "Boeing B-17 Flying Fortress, WWII bomber",
+  B25: "North American B-25 Mitchell, WWII bomber",
+  B29: "Boeing B-29 Superfortress, WWII bomber",
+  LANC: "Avro Lancaster, WWII bomber",
+  P51: "North American P-51 Mustang, WWII fighter",
+  SPIT: "Supermarine Spitfire, WWII fighter",
+  HURI: "Hawker Hurricane, WWII fighter",
+  CORS: "Vought F4U Corsair, WWII fighter",
+  T6: "North American T-6 Texan / Harvard, vintage trainer",
+  CAT: "Consolidated PBY Catalina flying boat",
+  CL2T: "Canadair CL-215T water bomber",
+  CL4G: "Canadair CL-415 water bomber",
+  DHC2: "de Havilland Beaver bush plane",
+  DHC3: "de Havilland Otter bush plane",
+  ZEPN: "Zeppelin NT airship",
+  BLMP: "Blimp / airship",
+};
+const GOV_OPERATOR = /government|ministry|air force|armed forces|national defen[cs]e|royal canadian|department of|state of |federal|police|coast guard|army|navy|marine corps|nasa|rcmp/i;
+
+// Tell the user once per aircraft per visit when something notable comes within range.
+const announced = new Set();
+let toastTimer = 0;
+function announceNotable(all) {
+  if (!state.fetchedAt) return;
+  const fresh = all.filter((p) => !isGround(p) && notableInfo(p) && !announced.has(p.hex)).sort((a, b) => a.dist - b.dist);
+  fresh.forEach((p) => announced.add(p.hex));
+  if (!fresh.length) return;
+  const p = fresh[0], n = notableInfo(p);
+  const name = (p.type && NOTABLE_TYPES[p.type] ? NOTABLE_TYPES[p.type].split(",")[0] : null) || p.desc || p.type || "Aircraft";
+  const t = $("toast");
+  t.innerHTML = `${tagHtml(n)} <b>${esc(name)}</b> ${fmt(p.dist, 1)} km ${compass(p.brg)}${fresh.length > 1 ? ` <span>+${fresh.length - 1} more</span>` : ""}`;
+  t.dataset.hex = p.hex;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 12000);
+}
+$("toast").addEventListener("click", (e) => { const hex = e.currentTarget.dataset.hex; e.currentTarget.hidden = true; if (state.planes.has(hex)) select(hex); });
+
+// -> {tag, cls, why} or null. Order: military, government, rare type, database "interesting" flag.
+function notableInfo(p) {
+  if (p.military) return { tag: "MIL", cls: "mil", why: "Military aircraft (flagged in the aircraft database)" };
+  if (p.op && GOV_OPERATOR.test(p.op)) return { tag: "GOV", cls: "gov", why: `Government operator: ${p.op}` };
+  if (p.type && NOTABLE_TYPES[p.type]) return { tag: "RARE", cls: "rare", why: NOTABLE_TYPES[p.type] };
+  if (p.interesting) return { tag: "★", cls: "rare", why: "Marked as interesting in the community aircraft database" };
+  return null;
+}
+const tagHtml = (n) => (n ? `<span class="tag ${n.cls}" title="${esc(n.why)}">${esc(n.tag)}</span>` : "");
 const SQUAWK = { "7500": "Hijack", "7600": "Radio failure", "7700": "Emergency" };
 
 // ---------- Map ----------
@@ -531,11 +625,11 @@ function planeIcon(p) {
   const sel = p.hex === state.selected ? " sel" : "";
   return L.divIcon({
     className: "",
-    html: `<div class="ac-icon${sel}" style="--c:var(${altBand(p)});--rot:${p.track ?? 0}deg">${PLANE_SVG}</div>`,
+    html: `<div class="ac-icon${sel}${notableInfo(p) ? " notable" : ""}" style="--c:var(${altBand(p)});--rot:${p.track ?? 0}deg">${PLANE_SVG}</div>`,
     iconSize: [28, 28], iconAnchor: [14, 14],
   });
 }
-const shown = (p) => state.showGround || !isGround(p) || p.hex === state.selected;
+const shown = (p) => p.hex === state.selected || ((state.showGround || !isGround(p)) && (!state.notableOnly || !!notableInfo(p)));
 function syncMarkers() {
   for (const [hex, m] of markers) {
     const p = state.planes.get(hex);
@@ -670,6 +764,7 @@ function normalize(ac) {
     lat: ac.lat, lon: ac.lon,
     seen: typeof ac.seen_pos === "number" ? ac.seen_pos : (ac.seen || 0),
     military: !!(ac.dbFlags & 1),
+    interesting: !!(ac.dbFlags & 2),
     cat: ac.category || null,
   };
 }
@@ -854,6 +949,8 @@ const DEMO = [
   ["SIA403","9V-SMJ","A359","AIRBUS A-350-900","SIN","DEL",27000,455,320,-600],
   ["VTRKD",  "VT-RKD","C172","CESSNA 172",null,null,2400,95,140,0],
   ["THY717","TC-LJA","B77W","BOEING 777-300ER","IST","DEL",36000,470,120,0],
+  ["ADB3021","UR-82029","A124","ANTONOV An-124 Ruslan",null,null,21000,410,250,-800],
+  ["RCH481","05-5141","C17","BOEING C-17 Globemaster III",null,null,26000,430,75,0,1],
 ];
 let demoSeed = null;
 function demoAirport(code) {
@@ -869,9 +966,9 @@ function demoData() {
     });
   }
   const list = demoSeed.map(({ d, pos, hex }) => {
-    const [flight, r, t, desc, from, to, alt, gs, track, vr] = d;
+    const [flight, r, t, desc, from, to, alt, gs, track, vr, dbFlags = 0] = d;
     if (from && to) state.routes.set(flight, { from: demoAirport(from), to: demoAirport(to), via: [], plausible: true });
-    return { hex, flight, r, t, desc, alt_baro: alt === 0 ? "ground" : alt, gs, track, baro_rate: vr, squawk: flight === "QTR571" ? "7700" : "2" + String(1000 + (hex.charCodeAt(2) * 37) % 6777).slice(-3), lat: pos.lat, lon: pos.lon, seen_pos: 1 };
+    return { hex, flight, r, t, desc, dbFlags, alt_baro: alt === 0 ? "ground" : alt, gs, track, baro_rate: vr, squawk: flight === "QTR571" ? "7700" : "2" + String(1000 + (hex.charCodeAt(2) * 37) % 6777).slice(-3), lat: pos.lat, lon: pos.lon, seen_pos: 1 };
   });
   return { source: "demo", list };
 }
@@ -1000,8 +1097,12 @@ function render() {
   if (state.mode === "trains") { renderTrains(); return; }
   const all = [...state.planes.values()];
   const air = all.filter((p) => !isGround(p));
-  const list = (state.showGround ? all : air).sort((a, b) => isGround(a) - isGround(b) || a.dist - b.dist);
-  const hidden = all.length - list.length;
+  const notableCount = all.filter((p) => notableInfo(p) && (state.showGround || !isGround(p))).length;
+  const list = (state.showGround ? all : air).filter((p) => !state.notableOnly || notableInfo(p))
+    .sort((a, b) => isGround(a) - isGround(b) || a.dist - b.dist);
+  const hidden = state.notableOnly ? 0 : all.length - list.length;
+  $("notableLbl").textContent = `Notable only${notableCount ? ` (${notableCount})` : ""}`;
+  announceNotable(all);
   $("sCount").textContent = air.length;
   $("sNear").textContent = air.length ? fmt(Math.min(...air.map((p) => p.dist)), 1) + " km" : "–";
   const withAlt = air.filter((p) => p.alt != null);
@@ -1013,7 +1114,9 @@ function render() {
   const ul = $("strips");
   if (!list.length) {
     ul.innerHTML = state.fetchedAt
-      ? `<li class="empty">No aircraft in the air within ${state.radiusKm} km right now.${hidden ? ` ${hidden} on the ground are hidden.` : " Try a larger radius."}</li>`
+      ? state.notableOnly
+        ? `<li class="empty">No military, government or rare aircraft within ${state.radiusKm} km right now. Try a larger radius, or untick “Notable only”.</li>`
+        : `<li class="empty">No aircraft in the air within ${state.radiusKm} km right now.${hidden ? ` ${hidden} on the ground are hidden.` : " Try a larger radius."}</li>`
       : `<li class="empty">Looking for aircraft near you…</li>`;
   } else {
     ul.innerHTML = list.map((p) => {
@@ -1026,7 +1129,7 @@ function render() {
         <div class="band"></div>
         <div class="a">
           <div class="idrow">${logoHtml(al)}
-            <div class="id"><div class="cs">${esc(fn || p.callsign || p.reg || p.hex.toUpperCase())}${sq}</div>
+            <div class="id"><div class="cs">${esc(fn || p.callsign || p.reg || p.hex.toUpperCase())}${sq}${tagHtml(notableInfo(p))}</div>
             <div class="sub">${esc(sub)}</div></div>
           </div>
           ${routeLine(p, info)}
@@ -1096,6 +1199,7 @@ function renderDetail() {
       </div>
       ${sqName ? `<span class="sq" style="font-size:13px;line-height:24px;padding:0 8px">${esc(p.squawk)} · ${sqName}</span>` : ""}
     </div>
+    ${(() => { const n = notableInfo(p); return n ? `<p class="why ${n.cls}">${tagHtml(n)} ${esc(n.why)}</p>` : ""; })()}
     ${legs}
     ${etaBlock}
     <dl class="facts">
@@ -1139,6 +1243,7 @@ function closeDetail() {
   if (state.mode === "trains" && state.showAllTrains) fitTrains(); else fitRadius();
 }
 $("showGround").addEventListener("change", (e) => { state.showGround = e.target.checked; render(); });
+$("notableOnly").addEventListener("change", (e) => { state.notableOnly = e.target.checked; render(); });
 $("strips").addEventListener("click", (e) => { const li = e.target.closest(".strip"); if (li) select(li.dataset.hex); });
 $("strips").addEventListener("keydown", (e) => {
   if (e.key !== "Enter" && e.key !== " ") return;
@@ -1508,7 +1613,9 @@ function drawRadar(now) {
         ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.sin(rad(p.track)) * 12, y - Math.cos(rad(p.track)) * 12); ctx.stroke();
       }
       if (sel) { ctx.strokeStyle = `rgba(${rgb},.9)`; ctx.strokeRect(x - 8, y - 8, 16, 16); }
-      const label = flightNumber(p) || p.callsign || p.reg || p.hex.toUpperCase();
+      const nInfo = notableInfo(p);
+      const label = (flightNumber(p) || p.callsign || p.reg || p.hex.toUpperCase()) + (nInfo ? ` ${nInfo.tag}` : "");
+      if (nInfo && !sel) { ctx.strokeStyle = `rgba(${rgb},${0.25 + 0.6 * b})`; ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.stroke(); }
       const vr = p.vr == null ? "" : p.vr > 300 ? "↑" : p.vr < -300 ? "↓" : "";
       const alt = isGround(p) ? "GND" : p.alt == null ? "---" : String(Math.round(p.alt / 100)).padStart(3, "0") + vr;
       const line2 = `${alt} ${p.gs != null ? Math.round(p.gs) : ""}`;
@@ -1584,7 +1691,7 @@ function applyModeUI() {
   document.querySelector(".brand h1").textContent = trains ? "Train Tracker" : "Flight Tracker";
   document.title = trains ? "Train Tracker" : "Flight Tracker";
   $("legend").hidden = trains;
-  $("groundWrap").hidden = trains;
+  $("flightToggles").hidden = trains;
   $("allTrainsWrap").hidden = !trains;
   $("footFlights").hidden = trains;
   $("footTrains").hidden = !trains;
