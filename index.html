@@ -1300,8 +1300,30 @@ function renderDetail() {
   drawRoute(p, false);
 }
 
+// Opening a detail may pan/zoom the map; closing it puts the user's own view back. If they move the
+// map themselves while the detail is open, closing leaves the map where they put it.
+let viewBeforeDetail = null, movedInDetail = false;
+function rememberView() {
+  if (state.selected) return; // switching between details keeps the original view
+  viewBeforeDetail = { center: map.getCenter(), zoom: map.getZoom() };
+  movedInDetail = false;
+}
+function restoreView() {
+  const v = viewBeforeDetail;
+  viewBeforeDetail = null;
+  if (movedInDetail) return;
+  if (v) map.setView(v.center, v.zoom);
+  else if (state.mode === "trains" && state.showAllTrains) fitTrains(); else fitRadius();
+}
+const userMoved = () => { if (state.selected) movedInDetail = true; };
+map.on("dragstart", userMoved);
+map.getContainer().addEventListener("touchstart", (e) => { if (e.touches.length > 1) userMoved(); }, { passive: true });
+map.getContainer().addEventListener("wheel", userMoved, { passive: true });
+map.on("dblclick", userMoved);
+
 function select(hex) {
   if (state.mode === "trains") { selectTrain(hex); return; }
+  rememberView();
   state.selected = hex;
   openSheet("detail");
   $("listView").hidden = true;
@@ -1317,7 +1339,7 @@ function closeDetail() {
   $("listView").hidden = false;
   if (!sheetState.list) closeSheet(); // opened straight into a detail: go back to the map
   render();
-  if (state.mode === "trains" && state.showAllTrains) fitTrains(); else fitRadius();
+  restoreView();
 }
 $("showGround").addEventListener("change", (e) => { state.showGround = e.target.checked; render(); });
 $("notableOnly").addEventListener("change", (e) => { state.notableOnly = e.target.checked; render(); });
@@ -1594,6 +1616,7 @@ function renderTrainDetail() {
 }
 
 function selectTrain(id) {
+  rememberView();
   state.selected = id;
   openSheet("detail");
   $("listView").hidden = true;
