@@ -22,8 +22,8 @@ A **Flights | Trains** toggle switches between them (remembered per browser).
   change or disappear without notice.
 - **GO Transit:** live trains from the Metrolinx Open Data API through a Netlify Function
   (`netlify/functions/go-trains.mts`, served at `/api/go/trains`) so the key never reaches the browser.
-  It is **off until `METROLINX_KEY` is set** in Netlify (Project configuration → Environment variables,
-  scope must include Functions), then redeploy. Upstream calls are cached 15 s; Metrolinx disables keys
+  It reads `METROLINX_KEY` from Netlify (Project configuration → Environment variables, scope Functions);
+  without it the endpoint answers `{configured:false}` and the page shows VIA only. Changing the key needs a redeploy. Upstream calls are cached 15 s; Metrolinx disables keys
   that call too often. Built from the documented response format; verify on first real run.
 - TTC subway: no live positions are published.
 
