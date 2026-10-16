@@ -51,7 +51,8 @@ export default async () => {
     if (!trips.length && j?.Metadata?.ErrorMessage && !/^(OK|Success)?$/i.test(j.Metadata.ErrorMessage)) {
       throw new Error(`Metrolinx: ${j.Metadata.ErrorMessage}`)
     }
-    const name = (code: unknown) => (typeof code === "string" && code ? names[code] || code : null)
+    // Station codes resolve to names; anything else (track timing points like "CANP", "9THL") is dropped.
+    const name = (code: unknown) => (typeof code === "string" && code && names[code] ? names[code] : null)
     const trains = trips
       .filter((t) => typeof t.Latitude === "number" && typeof t.Longitude === "number" && (t.Latitude || t.Longitude))
       .map((t) => ({
