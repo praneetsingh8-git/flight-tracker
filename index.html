@@ -43,6 +43,7 @@
   --f-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   --f-data: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --dock-h: 64px;
+  --badge-clear: 52px; /* keep tappable UI above the hosting badge pinned to the bottom of the viewport */
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -159,7 +160,7 @@ button, select, input { font: inherit; color: inherit; }
 .dock {
   position: absolute; z-index: 900; left: 0; right: 0; bottom: 0; pointer-events: none;
   display: flex; align-items: flex-end; gap: 8px; justify-content: center; flex-wrap: wrap;
-  padding: 0 max(12px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 12px) max(12px, env(safe-area-inset-left, 0px));
+  padding: 0 max(12px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + var(--badge-clear) + 12px) max(12px, env(safe-area-inset-left, 0px));
 }
 .dock > * { pointer-events: auto; }
 .nowbar {
@@ -197,7 +198,7 @@ button, select, input { font: inherit; color: inherit; }
   position: absolute; z-index: 850; left: 0; right: 0; bottom: 0;
   height: min(74%, calc(100% - env(safe-area-inset-top, 0px) - 70px));
   border-radius: 30px 30px 0 0; display: flex; flex-direction: column; overflow: hidden;
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--dock-h) + 70px);
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--badge-clear) + var(--dock-h) + 70px);
   animation: sheetIn .28s ease;
 }
 @keyframes sheetIn { from { transform: translateY(24px); opacity: .6; } }
@@ -208,7 +209,7 @@ button, select, input { font: inherit; color: inherit; }
 @media (min-width: 900px) {
   .sheet {
     left: max(16px, env(safe-area-inset-left, 0px)); right: auto; width: 400px;
-    top: calc(env(safe-area-inset-top, 0px) + 64px); bottom: calc(env(safe-area-inset-bottom, 0px) + var(--dock-h) + 28px);
+    top: calc(env(safe-area-inset-top, 0px) + 64px); bottom: calc(env(safe-area-inset-bottom, 0px) + var(--badge-clear) + var(--dock-h) + 28px);
     height: auto; border-radius: 26px; padding-bottom: 0;
   }
   .legend { left: auto; right: 12px; }
@@ -258,7 +259,7 @@ button, select, input { font: inherit; color: inherit; }
 .logo.none svg { width: 20px; height: 20px; fill: var(--muted); }
 .logo.lg { width: 58px; height: 58px; border-radius: 14px; }
 .logo.lg b { font-size: 16px; }
-.logo.go { background: #00853f; } .logo.go b { color: #fff; }
+.logo.go { background: var(--go, #00853f); } .logo.go b { color: #fff; }
 .sq { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 6px; background: var(--danger); color: #fff; font: 600 11px/18px var(--f-body); vertical-align: 2px; }
 .tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 6px; font: 600 11px/18px var(--f-body); vertical-align: 2px; color: #fff; }
 .tag.mil { background: #5e7a3a; } .tag.gov { background: #2f5fa7; } .tag.rare { background: #c27c00; }
@@ -334,7 +335,7 @@ dl.facts dd small { font-weight: 400; color: var(--muted); }
 .me-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 3px solid #fff; box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 22%, transparent), 0 1px 4px rgba(0,0,0,.3); }
 .toast {
   position: absolute; z-index: 910; left: 50%; transform: translateX(-50%);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--dock-h) + 84px); max-width: calc(100% - 32px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--badge-clear) + var(--dock-h) + 84px); max-width: calc(100% - 32px);
   display: inline-flex; align-items: center; gap: 6px; padding: 10px 14px; border-radius: 999px; cursor: pointer; color: var(--fg); font-size: 14px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -347,8 +348,8 @@ dl.facts dd small { font-weight: 400; color: var(--muted); }
 .leaflet-picking { cursor: crosshair; }
 .leaflet-control-zoom { display: none; }
 .leaflet-control-attribution { font-size: 9px !important; background: var(--glass) !important; border-radius: 8px 0 0 0; }
-.leaflet-bottom.leaflet-right { bottom: calc(env(safe-area-inset-bottom, 0px) + var(--dock-h) + 76px); }
-@media (min-width: 700px) { .leaflet-bottom.leaflet-right { bottom: calc(env(safe-area-inset-bottom, 0px) + var(--dock-h) + 20px); } }
+.leaflet-bottom.leaflet-right { bottom: calc(env(safe-area-inset-bottom, 0px) + var(--badge-clear) + var(--dock-h) + 76px); }
+@media (min-width: 700px) { .leaflet-bottom.leaflet-right { bottom: calc(env(safe-area-inset-bottom, 0px) + var(--badge-clear) + var(--dock-h) + 20px); } }
 @media (max-width: 699px) { .legend { display: none; } .statuscap { font-size: 13px; padding: 0 12px 0 10px; } }
 @media (prefers-reduced-motion: reduce) { .ac-icon svg, .arrow, .tabbar { transition: none; } .sheet { animation: none; } }
 </style>
@@ -432,6 +433,8 @@ const TRAIN_REFRESH_MS = 30000;
 const VIA_URLS = ["/api/via/data/allData.json", "https://tsimobile.viarail.ca/data/allData.json"];
 // GO Transit via our Netlify Function (netlify/functions/go-trains.mts), which holds the Metrolinx key.
 const GO_URL = "/api/go/trains";
+const GO_CODE = { GT: "KI" }; // Metrolinx feed uses GT internally; riders know it as KI
+const GO_COLOR = { LW: "#98002e", LE: "#ee3124", MI: "#f57f25", KI: "#00853f", BR: "#003767", RH: "#00a3e0", ST: "#794500" };
 const GO_LINES = { LW: "Lakeshore West", LE: "Lakeshore East", ST: "Stouffville", BR: "Barrie", RH: "Richmond Hill", GT: "Kitchener", KI: "Kitchener", MI: "Milton" };
 const KM_PER_NM = 1.852;
 // The /api/* paths are same-origin rewrites to the real services (see netlify.toml), which
@@ -1361,10 +1364,11 @@ function parseViaTrain(key, t) {
 function parseGoTrain(t) {
   if (!t || typeof t.lat !== "number" || typeof t.lon !== "number") return null;
   const lineName = GO_LINES[t.line] || t.line || null;
+  const lineCode = t.line ? GO_CODE[t.line] || String(t.line).toUpperCase() : "GO";
   const to = t.last || (t.display ? String(t.display).replace(/^[A-Z]{2}\s*-\s*/, "") : null);
   const nextName = t.at || t.next;
   return {
-    id: "go-" + t.trip, op: "GO", number: t.trip, line: lineName,
+    id: "go-" + t.trip, op: "GO", number: t.trip, line: lineName, lineCode,
     from: t.first || "", to: to || "",
     lat: t.lat, lon: t.lon, speed: null, heading: t.course,
     poll: t.modified ? Date.parse(t.modified.replace(" ", "T")) || null : null,
@@ -1445,7 +1449,7 @@ function syncTrainMarkers() {
     const st = trainStatus(tr);
     const icon = L.divIcon({
       className: "",
-      html: `<div class="tr-icon${tr.id === state.selected ? " sel" : ""}" style="--c:var(${STATUS_VAR[st.cls]})">${esc(tr.number)}</div>`,
+      html: `<div class="tr-icon${tr.id === state.selected ? " sel" : ""}" style="--c:var(${STATUS_VAR[st.cls]})">${esc(tr.op === "GO" ? trainLabel(tr) : tr.number)}</div>`,
       iconSize: [36, 22], iconAnchor: [18, 11],
     });
     let m = trainMarkers.get(tr.id);
@@ -1474,10 +1478,10 @@ function trainProgress(tr) {
   if (!t0 || !t1 || t1 <= t0 || first === last) return null;
   return Math.max(0, Math.min(1, (Date.now() - t0) / (t1 - t0)));
 }
-const trainLabel = (tr) => `${tr.op} ${tr.number}`;
+const trainLabel = (tr) => `${tr.op === "GO" ? tr.lineCode : tr.op} ${tr.number}`;
 const trainSub = (tr) => (tr.op === "GO" ? `GO Transit${tr.line ? " · " + tr.line : ""}` : "VIA Rail");
 function trainLogo(tr, big) {
-  if (tr.op === "GO") return `<span class="logo go${big ? " lg" : ""}" aria-hidden="true"><b>GO</b></span>`;
+  if (tr.op === "GO") return `<span class="logo go${big ? " lg" : ""}" aria-hidden="true" style="--go:${GO_COLOR[tr.lineCode] || "#00853f"}"><b>${esc(tr.lineCode)}</b></span>`;
   return `<span class="logo${big ? " lg" : ""}" aria-hidden="true"><b>VIA</b><img src="${LOGO_URL("2R")}" alt="" loading="lazy" onerror="this.remove()"></span>`;
 }
 function updateTrainFoot(viaOk) {
