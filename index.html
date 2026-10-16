@@ -1689,9 +1689,10 @@ function renderTrainDetail() {
 }
 
 // "in 4 min" / "6 min ago" from an ISO time
-function relMin(iso) {
+function relMin(iso, upcoming) {
   if (!iso) return null;
   const m = Math.round((Date.parse(iso) - Date.now()) / 60000);
+  if (upcoming && m <= 0) return "Due now"; // still ahead of the train, just running behind the clock
   if (m === 0) return "now";
   return m > 0 ? `in ${m} min` : `${-m} min ago`;
 }
@@ -1711,7 +1712,7 @@ function stationCards(tr) {
       <h3>${n && n.atStation ? "At station" : "Next station"}</h3>
       <b>${n ? esc(n.name) : "—"}</b>
       <dl>
-        ${row(n && n.atStation ? "Departs" : "Arrives in", n && n.atStation ? (n.estDep || n.schedDep ? relMin(n.estDep || n.schedDep) : "—") : nT ? relMin(nT) : "—")}
+        ${row(n && n.atStation ? "Departs" : "Arrives in", n && n.atStation ? (n.estDep || n.schedDep ? relMin(n.estDep || n.schedDep, true) : "—") : nT ? relMin(nT, true) : "—")}
         ${row(n && n.atStation ? "Departure" : "Arrival", nT ? stationTime(n && n.atStation ? n.estDep || n.schedDep || nT : nT, n.tz) + (n.sched && n.est && Math.abs(minsBetween(n.sched, n.est)) >= 1 ? ` <small>sched ${stationTime(n.sched, n.tz)}</small>` : "") : "—")}
         ${row("Status", `<span class="pill ${nLate.cls}">${nLate.text}</span>`)}
       </dl></section>`;
