@@ -432,7 +432,7 @@ const TRAIN_REFRESH_MS = 30000;
 const VIA_URLS = ["/api/via/data/allData.json", "https://tsimobile.viarail.ca/data/allData.json"];
 // GO Transit via our Netlify Function (netlify/functions/go-trains.mts), which holds the Metrolinx key.
 const GO_URL = "/api/go/trains";
-const GO_LINES = { LW: "Lakeshore West", LE: "Lakeshore East", ST: "Stouffville", BR: "Barrie", RH: "Richmond Hill", KI: "Kitchener", MI: "Milton" };
+const GO_LINES = { LW: "Lakeshore West", LE: "Lakeshore East", ST: "Stouffville", BR: "Barrie", RH: "Richmond Hill", GT: "Kitchener", KI: "Kitchener", MI: "Milton" };
 const KM_PER_NM = 1.852;
 // The /api/* paths are same-origin rewrites to the real services (see netlify.toml), which
 // avoids the browser's cross-origin (CORS) block. Direct URLs are a fallback for hosts without them.
@@ -1372,6 +1372,9 @@ function parseGoTrain(t) {
     next: nextName ? { name: nextName, atStation: !!t.at } : null, dest: null,
     delay: t.delaySec == null ? null : Math.round(t.delaySec / 60),
     passedCount: 0, cars: t.cars, occupancy: t.occupancy, moving: t.moving,
+    // Parked at its first station before departure: Metrolinx reports a large negative delay then.
+    waiting: !t.moving && !!t.at && t.at === t.first,
+    start: t.start || null,
   };
 }
 async function loadGo() {
@@ -1387,6 +1390,7 @@ async function loadGo() {
 
 // Lateness at the next stop -> label + colour class
 function trainStatus(tr) {
+  if (tr.waiting) return { cls: "na", text: tr.start ? `Departs ${tr.start}` : "Not departed" };
   const d = tr.delay;
   if (d == null) return { cls: "na", text: "No estimate" };
   if (d <= -2) return { cls: "early", text: `${-d} min early` };
