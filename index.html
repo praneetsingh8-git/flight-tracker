@@ -273,7 +273,17 @@ button, select, input { font: inherit; color: inherit; }
 .pill.late { background: color-mix(in srgb, var(--sel) 22%, transparent); color: var(--sel); }
 .pill.bad { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
 .pill.na { background: var(--surface-2); color: var(--muted); }
-.tr-icon { display: grid; place-items: center; min-width: 30px; height: 22px; padding: 0 6px; border-radius: 8px; font: 700 11px/1 var(--f-body); color: #fff; background: var(--c, var(--accent)); border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); white-space: nowrap; }
+.tr-icon { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); display: grid; place-items: center; min-width: 30px; height: 22px; padding: 0 6px; border-radius: 8px; font: 700 11px/1 var(--f-body); color: #fff; background: var(--c, var(--accent)); border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); white-space: nowrap; }
+.stns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+.stn { background: var(--surface-2); border-radius: 16px; padding: 12px 14px; min-width: 0; }
+.stn h3 { margin: 0 0 2px; font: 500 13px/1.3 var(--f-body); color: var(--muted); }
+.stn > b { display: block; font-size: 17px; font-weight: 650; line-height: 1.25; margin-bottom: 8px; overflow-wrap: anywhere; }
+.stn dl { margin: 0; display: grid; gap: 6px; }
+.stn dl div { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.stn dt { font-size: 13px; color: var(--muted); }
+.stn dd { margin: 0; font-size: 14px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.stn dd small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+.stn .pill { font-size: 12px; }
 .tr-icon.sel { outline: 3px solid var(--sel); }
 .stops { list-style: none; margin: 12px 0; padding: 0; border-radius: 14px; overflow: hidden; background: var(--surface); }
 .stops li { display: grid; grid-template-columns: 14px 1fr auto auto; gap: 10px; align-items: center; padding: 9px 12px; border-top: .5px solid var(--line); font-size: 14px; }
@@ -1401,7 +1411,72 @@ function parseGoTrain(t) {
     // Parked at its first station before departure: Metrolinx reports a large negative delay then.
     waiting: !t.moving && !!t.at && t.at === t.first,
     start: t.start || null,
+    codes: { prev: t.prevCode, next: t.nextCode, at: t.atCode },
   };
+}
+
+// ---- GO per-trip stop times (fetched when a GO train's detail is open) ----
+const GO_TZ = "America/Toronto";
+const goTrips = new Map(); // trip number -> { at, data, loading }
+// Wall-clock time in Toronto -> epoch ms (handles EST/EDT).
+function torontoMs(y, mo, d, h, mi, s) {
+  const guess = Date.UTC(y, mo - 1, d, h, mi, s || 0);
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: GO_TZ, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" })
+    .formatToParts(new Date(guess)).map((x) => [x.type, +x.value]));
+  const shown = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  return guess - (shown - guess);
+}
+// Metrolinx time strings: "2026-10-16 16:28:00", "2026-10-16T16:28", or "16:28" (on the operating day; 24:xx+ = after midnight).
+function goTime(str, day) {
+  if (!str) return null;
+  let m = String(str).match(/^(\d{4})-?(\d{2})-?(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (m) return new Date(torontoMs(+m[1], +m[2], +m[3], +m[4], +m[5], +(m[6] || 0))).toISOString();
+  m = String(str).match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  const dm = String(day || "").match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (m && dm) return new Date(torontoMs(+dm[1], +dm[2], +dm[3], 0, 0, 0) + ((+m[1] * 60 + +m[2]) * 60 + +(m[3] || 0)) * 1000).toISOString();
+  return null;
+}
+async function loadGoTrip(num) {
+  const c = goTrips.get(num);
+  if (c && (c.loading || Date.now() - c.at < 30000)) return;
+  goTrips.set(num, { ...(c || {}), loading: true });
+  try {
+    const r = await fetch(`/api/go/trip?trip=${encodeURIComponent(num)}`, { signal: AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined });
+    const j = (r.headers.get("content-type") || "").includes("json") ? await r.json() : null;
+    goTrips.set(num, { at: Date.now(), data: j && Array.isArray(j.stops) && j.stops.length ? j : (c && c.data) || null });
+  } catch (e) {
+    goTrips.set(num, { at: Date.now(), data: (c && c.data) || null });
+  }
+  const tr = state.trains.get(state.selected);
+  if (tr && tr.op === "GO" && tr.number === num) render();
+}
+// Merge a fetched trip's stops into the live train (same shape VIA uses).
+function applyGoTrip(tr) {
+  const d = goTrips.get(tr.number)?.data;
+  if (!d) return;
+  const now = Date.now();
+  const stops = d.stops.map((x) => {
+    const sched = goTime(x.arr.scheduled, d.day) || goTime(x.dep.scheduled, d.day);
+    const est = goTime(x.arr.computed, d.day) || goTime(x.dep.computed, d.day);
+    const schedDep = goTime(x.dep.scheduled, d.day), estDep = goTime(x.dep.computed, d.day);
+    return { name: x.name || x.code || "?", code: x.code, tz: GO_TZ, sched, est: est || (sched && tr.delay != null ? new Date(Date.parse(sched) + tr.delay * 60000).toISOString() : null),
+      schedDep, estDep, delay: minsBetween(sched, est) };
+  });
+  if (!stops.length) return;
+  // Where is the train? Prefer Metrolinx's own at/next station codes; fall back to the clock.
+  const idx = (code) => (code ? stops.findIndex((x) => x.code === code) : -1);
+  let nextI = idx(tr.codes.at);
+  if (nextI < 0) nextI = idx(tr.codes.next);
+  if (nextI < 0) { const p = idx(tr.codes.prev); if (p >= 0) nextI = p + 1; }
+  if (nextI < 0) { nextI = stops.findIndex((x) => Date.parse(x.estDep || x.est || x.sched) > now); if (nextI < 0) nextI = stops.length; }
+  const atStation = idx(tr.codes.at) === nextI && nextI >= 0;
+  stops.forEach((x, i) => { x.passed = i < nextI; });
+  tr.stops = stops;
+  tr.passedCount = Math.min(nextI, stops.length);
+  tr.next = stops[nextI] ? { ...stops[nextI], atStation } : null;
+  tr.lastStop = nextI > 0 ? stops[nextI - 1] : null;
+  tr.dest = stops[stops.length - 1];
+  if (tr.next && tr.next.delay != null) tr.delay = tr.next.delay;
 }
 async function loadGo() {
   const r = await fetch(GO_URL, { signal: AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined });
@@ -1472,7 +1547,7 @@ function syncTrainMarkers() {
     const icon = L.divIcon({
       className: "",
       html: `<div class="tr-icon${tr.id === state.selected ? " sel" : ""}" style="--c:var(${STATUS_VAR[st.cls]})">${esc(tr.op === "GO" ? trainLabel(tr) : tr.number)}</div>`,
-      iconSize: [36, 22], iconAnchor: [18, 11],
+      iconSize: [0, 0], iconAnchor: [0, 0], // zero-size anchor; the pill centres itself and grows to fit its label
     });
     let m = trainMarkers.get(tr.id);
     if (!m) {
@@ -1566,6 +1641,8 @@ function renderTrainDetail() {
   const tr = state.trains.get(state.selected);
   const v = $("detailView");
   if (!tr) { closeDetail(); return; }
+  if (tr.op === "GO") { loadGoTrip(tr.number); applyGoTrip(tr); }
+  if (tr.op === "VIA" && !tr.lastStop) { const i = tr.stops.indexOf(tr.next); tr.lastStop = i > 0 ? tr.stops[i - 1] : null; }
   const st = trainStatus(tr);
   const left = tr.stops.length - tr.passedCount;
   const pct = trainProgress(tr);
@@ -1586,6 +1663,7 @@ function renderTrainDetail() {
       <div class="dtitle"><div class="cs">${esc(trainLabel(tr))}</div><div class="op">${esc(trainSub(tr))}${tr.serviceDate ? ` · started ${esc(new Date(tr.serviceDate + "T12:00:00").toLocaleDateString([], { month: "short", day: "numeric" }))}` : ""}</div></div>
       <span class="pill ${st.cls}" style="font-size:14px;line-height:26px;padding:0 10px">${st.text}</span>
     </div>
+    ${stationCards(tr)}
     <div class="legs">
       <div class="pair">
         <div class="leg from"><code>${esc(tr.from)}</code></div><div class="mid">→</div><div class="leg to"><code>${esc(tr.to)}</code></div>
@@ -1593,13 +1671,8 @@ function renderTrainDetail() {
       ${pct != null ? `<div class="bar"><span style="width:${(pct * 100).toFixed(1)}%"></span></div>` : ""}
       ${tr.stops.length ? `<div class="note">${left === 1 ? "Final stop next" : `${left} stops to go`}</div>` : ""}
     </div>
-    <div class="status">
-      <div><small>${tr.next && tr.next.atStation ? "At station" : "Next stop"}</small><b>${tr.next ? esc(tr.next.name) : "—"}</b>${tr.next && tr.next.sched ? `<em>${stationTime(tr.next.est || tr.next.sched, tr.next.tz)}</em>` : ""}</div>
-      ${dest ? `<div><small>Arrives ${esc(dest.name)}</small><b>${stationTime(dest.est || dest.sched, dest.tz)}</b>${dest.sched ? `<em>Scheduled ${stationTime(dest.sched, dest.tz)}</em>` : ""}</div>`
-        : `<div><small>Heading to</small><b>${esc(tr.to || "—")}</b></div>`}
-      <div><small>Status</small><b>${st.text}</b>${tr.delay != null ? `<em>at next stop</em>` : ""}</div>
-    </div>
-    <p class="fine">${tr.op === "GO" ? "Delay is GO Transit's own figure from Metrolinx's live data." : "Times are VIA Rail's own estimates, shown in each station's local time. VIA notes its tracking relies on cellular signal, so estimates can lag."}</p>
+    ${dest && dest !== tr.next ? `<div class="status"><div><small>Arrives ${esc(dest.name)}</small><b>${stationTime(dest.est || dest.sched, dest.tz)}</b>${dest.sched ? `<em>Scheduled ${stationTime(dest.sched, dest.tz)}</em>` : ""}</div></div>` : ""}
+    <p class="fine">${tr.op === "GO" ? "Times are Metrolinx's live estimates where it gives them, otherwise the schedule shifted by the train's current delay. Toronto time." : "Times are VIA Rail's own estimates, shown in each station's local time. VIA notes its tracking relies on cellular signal, so estimates can lag."}</p>
     ${tr.stops.length ? `<ol class="stops">${stopsHtml}</ol>` : ""}
     <dl class="facts">
       <div><dt>${tr.op === "GO" ? "Moving" : "Speed"}</dt><dd>${tr.op === "GO" ? (tr.moving ? "Yes" : "Stopped") : tr.speed != null ? fmt(tr.speed) + " km/h" : "—"}</dd></div>
@@ -1613,6 +1686,45 @@ function renderTrainDetail() {
       ? `<a href="https://www.gotransit.com/" target="_blank" rel="noopener">GO Transit</a>`
       : `<a href="https://tsimobile.viarail.ca/" target="_blank" rel="noopener">VIA Rail train tracker</a>`}</div>`;
   $("backBtn").addEventListener("click", closeDetail);
+}
+
+// "in 4 min" / "6 min ago" from an ISO time
+function relMin(iso) {
+  if (!iso) return null;
+  const m = Math.round((Date.parse(iso) - Date.now()) / 60000);
+  if (m === 0) return "now";
+  return m > 0 ? `in ${m} min` : `${-m} min ago`;
+}
+function lateness(x, fallback) {
+  const d = x && x.sched && x.est ? minsBetween(x.sched, x.est) : fallback;
+  const s = trainStatus({ delay: d }); // same thresholds as the map and list (GO counts up to 5 min as on time)
+  if (s.cls === "ok" && d >= 1) s.text = `On time · +${d} min`;
+  return s;
+}
+// Next-station and last-station cards for the train detail.
+function stationCards(tr) {
+  const n = tr.next, l = tr.lastStop;
+  const row = (k, v) => `<div><dt>${k}</dt><dd>${v}</dd></div>`;
+  const nLate = lateness(n, n === tr.next ? tr.delay : null);
+  const nT = n && (n.est || n.sched);
+  const nextCard = `<section class="stn">
+      <h3>${n && n.atStation ? "At station" : "Next station"}</h3>
+      <b>${n ? esc(n.name) : "—"}</b>
+      <dl>
+        ${row(n && n.atStation ? "Departs" : "Arrives in", n && n.atStation ? (n.estDep || n.schedDep ? relMin(n.estDep || n.schedDep) : "—") : nT ? relMin(nT) : "—")}
+        ${row(n && n.atStation ? "Departure" : "Arrival", nT ? stationTime(n && n.atStation ? n.estDep || n.schedDep || nT : nT, n.tz) + (n.sched && n.est && Math.abs(minsBetween(n.sched, n.est)) >= 1 ? ` <small>sched ${stationTime(n.sched, n.tz)}</small>` : "") : "—")}
+        ${row("Status", `<span class="pill ${nLate.cls}">${nLate.text}</span>`)}
+      </dl></section>`;
+  const lT = l && (l.est || l.sched);
+  const lastCard = `<section class="stn">
+      <h3>Last station</h3>
+      <b>${l ? esc(l.name) : tr.from ? esc(tr.from) : "—"}</b>
+      <dl>
+        ${row("Left", l && (l.estDep || l.schedDep || lT) ? relMin(l.estDep || l.schedDep || lT) : "—")}
+        ${row("Arrived", lT ? stationTime(lT, l.tz) + (l.sched && l.est && Math.abs(minsBetween(l.sched, l.est)) >= 1 ? ` <small>sched ${stationTime(l.sched, l.tz)}</small>` : "") : "—")}
+        ${row("Status", l ? (() => { const s = lateness(l, null); return `<span class="pill ${s.cls}">${s.text}</span>`; })() : "—")}
+      </dl></section>`;
+  return `<div class="stns">${nextCard}${lastCard}</div>`;
 }
 
 function selectTrain(id) {
