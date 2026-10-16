@@ -273,7 +273,7 @@ button, select, input { font: inherit; color: inherit; }
 .pill.late { background: color-mix(in srgb, var(--sel) 22%, transparent); color: var(--sel); }
 .pill.bad { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
 .pill.na { background: var(--surface-2); color: var(--muted); }
-.tr-icon { display: grid; place-items: center; min-width: 30px; height: 22px; padding: 0 6px; border-radius: 8px; font: 700 11px/1 var(--f-body); color: #fff; background: var(--c, var(--accent)); border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); white-space: nowrap; }
+.tr-icon { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); display: grid; place-items: center; min-width: 30px; height: 22px; padding: 0 6px; border-radius: 8px; font: 700 11px/1 var(--f-body); color: #fff; background: var(--c, var(--accent)); border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); white-space: nowrap; }
 .tr-icon.sel { outline: 3px solid var(--sel); }
 .stops { list-style: none; margin: 12px 0; padding: 0; border-radius: 14px; overflow: hidden; background: var(--surface); }
 .stops li { display: grid; grid-template-columns: 14px 1fr auto auto; gap: 10px; align-items: center; padding: 9px 12px; border-top: .5px solid var(--line); font-size: 14px; }
@@ -1472,7 +1472,7 @@ function syncTrainMarkers() {
     const icon = L.divIcon({
       className: "",
       html: `<div class="tr-icon${tr.id === state.selected ? " sel" : ""}" style="--c:var(${STATUS_VAR[st.cls]})">${esc(tr.op === "GO" ? trainLabel(tr) : tr.number)}</div>`,
-      iconSize: [36, 22], iconAnchor: [18, 11],
+      iconSize: [0, 0], iconAnchor: [0, 0], // zero-size anchor; the pill centres itself and grows to fit its label
     });
     let m = trainMarkers.get(tr.id);
     if (!m) {
